@@ -110,6 +110,106 @@ impl Client {
         Ok(parsed)
     }
 
+    pub async fn list_spam(&self, max: u32) -> Result<Vec<Message>> {
+        let browser = connect_or_start_browser(self.port).await?;
+        let page = find_outlook_page(&browser).await?;
+
+        // Navigate to Junk folder
+        let nav_script = r#"
+            (async () => {
+                // Find and click Junk folder in the folder list
+                const folders = document.querySelectorAll('[role="treeitem"], [data-folder-name]');
+                for (const folder of folders) {
+                    const text = folder.textContent?.toLowerCase() || '';
+                    const name = folder.getAttribute('data-folder-name')?.toLowerCase() || '';
+                    if (text.includes('junk') || name.includes('junk') ||
+                        text.includes('spam') || name.includes('spam')) {
+                        folder.click();
+                        return 'success';
+                    }
+                }
+
+                // Try clicking on folder pane items with aria-label
+                const ariaFolders = document.querySelectorAll('[aria-label*="Junk"], [aria-label*="junk"]');
+                if (ariaFolders.length > 0) {
+                    ariaFolders[0].click();
+                    return 'success';
+                }
+
+                return 'folder_not_found';
+            })()
+        "#;
+
+        let nav_result = page.evaluate(nav_script).await?;
+        let nav_status = nav_result.into_value::<String>().unwrap_or_default();
+
+        if nav_status == "folder_not_found" {
+            anyhow::bail!("Junk folder not found. Make sure the folder pane is visible.");
+        }
+
+        // Wait for folder to load
+        tokio::time::sleep(tokio::time::Duration::from_secs(2)).await;
+
+        // Now list messages (same logic as list_messages)
+        let script = r#"
+            (() => {
+                const messages = [];
+                const items = document.querySelectorAll('[data-convid]');
+                items.forEach(item => {
+                    const id = item.getAttribute('data-convid');
+                    const ariaLabel = item.getAttribute('aria-label') || '';
+
+                    let from = '';
+                    let subject = '';
+                    let preview = '';
+
+                    let label = ariaLabel.replace(/^Unread\s+/i, '').trim();
+
+                    const subjectStarters = /\s+(Re:|Fw:|FW:|RE:|New\s|Your\s|Action\s|Welcome|Microsoft|Amazon|Google|Apple|Thanks|Thank\s|Confirm|Verify|Update|Alert|Notice|Reminder|Invoice|Order|Shipping|Delivery)/i;
+                    const match = label.match(subjectStarters);
+
+                    if (match) {
+                        from = label.substring(0, match.index).trim();
+                        const rest = label.substring(match.index).trim();
+                        const timeParts = rest.split(/\s+\d{1,2}:\d{2}\s+|\s+\d{4}-\d{2}-\d{2}\s+/);
+                        subject = timeParts[0]?.trim() || '';
+                        preview = timeParts.slice(1).join(' ').trim();
+                    } else {
+                        const timeSplit = label.split(/\s+\d{1,2}:\d{2}\s+|\s+\d{4}-\d{2}-\d{2}\s+/);
+                        if (timeSplit.length > 1) {
+                            const firstPart = timeSplit[0];
+                            const emailMatch = firstPart.match(/^(.+?)<[^>]+>\s*(.*)/);
+                            if (emailMatch) {
+                                from = emailMatch[1].trim();
+                                subject = emailMatch[2].trim();
+                            } else {
+                                const words = firstPart.split(/\s+/);
+                                from = words.slice(0, 3).join(' ');
+                                subject = words.slice(3).join(' ');
+                            }
+                            preview = timeSplit.slice(1).join(' ').trim();
+                        } else {
+                            from = label;
+                        }
+                    }
+
+                    const isUnread = ariaLabel.toLowerCase().includes('unread');
+
+                    if (id) {
+                        messages.push({ id, subject, from, preview, labels: [], isUnread });
+                    }
+                });
+                return JSON.stringify(messages);
+            })()
+        "#;
+
+        let result = page.evaluate(script).await?;
+        let messages_str = result.into_value::<String>().unwrap_or_default();
+        let mut parsed: Vec<Message> = serde_json::from_str(&messages_str).unwrap_or_default();
+        parsed.truncate(max as usize);
+        Ok(parsed)
+    }
+
     pub async fn get_message(&self, id: &str) -> Result<Message> {
         let browser = connect_or_start_browser(self.port).await?;
         let page = find_outlook_page(&browser).await?;
@@ -257,6 +357,64 @@ impl Client {
         }
     }
 
+    pub async fn remove_label(&self, id: &str, label: &str) -> Result<()> {
+        let browser = connect_or_start_browser(self.port).await?;
+        let page = find_outlook_page(&browser).await?;
+
+        // Right-click to open context menu, then categorize and uncheck the label
+        let script = format!(
+            r#"
+            (async () => {{
+                const item = document.querySelector('[data-convid="{}"]');
+                if (!item) return 'not_found';
+
+                // Right-click on the item
+                const event = new MouseEvent('contextmenu', {{
+                    bubbles: true,
+                    cancelable: true,
+                    view: window,
+                    button: 2
+                }});
+                item.dispatchEvent(event);
+
+                await new Promise(r => setTimeout(r, 500));
+
+                // Find and click "Categorize" menu item
+                const menuItems = document.querySelectorAll('[role="menuitem"], [role="menuitemcheckbox"]');
+                for (const mi of menuItems) {{
+                    if (mi.textContent?.includes('Categorize')) {{
+                        mi.click();
+                        await new Promise(r => setTimeout(r, 500));
+                        break;
+                    }}
+                }}
+
+                // Find and click the specific category (clicking again removes it)
+                const categoryItems = document.querySelectorAll('[role="menuitemcheckbox"], [role="menuitem"]');
+                for (const ci of categoryItems) {{
+                    if (ci.textContent?.trim() === '{}') {{
+                        ci.click();
+                        return 'success';
+                    }}
+                }}
+
+                return 'category_not_found';
+            }})()
+        "#,
+            id, label
+        );
+
+        let result = page.evaluate(script).await?;
+        let status = result.into_value::<String>().unwrap_or_default();
+
+        match status.as_str() {
+            "success" => Ok(()),
+            "not_found" => anyhow::bail!("Message not found: {}", id),
+            "category_not_found" => anyhow::bail!("Category not found: {}", label),
+            _ => anyhow::bail!("Failed to remove label: {}", status),
+        }
+    }
+
     pub async fn archive(&self, id: &str) -> Result<()> {
         let browser = connect_or_start_browser(self.port).await?;
         let page = find_outlook_page(&browser).await?;
@@ -376,9 +534,248 @@ impl Client {
         }
     }
 
-    pub async fn unspam(&self, _id: &str) -> Result<()> {
-        // For unspam, user needs to navigate to Junk folder first
-        anyhow::bail!("unspam requires navigating to Junk folder - not yet implemented")
+    pub async fn unspam(&self, id: &str) -> Result<()> {
+        let browser = connect_or_start_browser(self.port).await?;
+        let page = find_outlook_page(&browser).await?;
+
+        // Navigate to Junk folder first
+        let nav_script = r#"
+            (async () => {
+                const folders = document.querySelectorAll('[role="treeitem"], [data-folder-name]');
+                for (const folder of folders) {
+                    const text = folder.textContent?.toLowerCase() || '';
+                    const name = folder.getAttribute('data-folder-name')?.toLowerCase() || '';
+                    if (text.includes('junk') || name.includes('junk') ||
+                        text.includes('spam') || name.includes('spam')) {
+                        folder.click();
+                        return 'success';
+                    }
+                }
+
+                const ariaFolders = document.querySelectorAll('[aria-label*="Junk"], [aria-label*="junk"]');
+                if (ariaFolders.length > 0) {
+                    ariaFolders[0].click();
+                    return 'success';
+                }
+
+                return 'folder_not_found';
+            })()
+        "#;
+
+        let nav_result = page.evaluate(nav_script).await?;
+        let nav_status = nav_result.into_value::<String>().unwrap_or_default();
+
+        if nav_status == "folder_not_found" {
+            anyhow::bail!("Junk folder not found. Make sure the folder pane is visible.");
+        }
+
+        tokio::time::sleep(tokio::time::Duration::from_secs(2)).await;
+
+        // Right-click on message and select "Not junk" or "Move to Inbox"
+        let script = format!(
+            r#"
+            (async () => {{
+                const item = document.querySelector('[data-convid="{}"]');
+                if (!item) return 'not_found';
+
+                const event = new MouseEvent('contextmenu', {{
+                    bubbles: true,
+                    cancelable: true,
+                    view: window,
+                    button: 2
+                }});
+                item.dispatchEvent(event);
+
+                await new Promise(r => setTimeout(r, 500));
+
+                // Look for "Not junk", "Not spam", or "Move to" options
+                const menuItems = document.querySelectorAll('[role="menuitem"]');
+                for (const mi of menuItems) {{
+                    const text = mi.textContent?.toLowerCase() || '';
+                    if (text.includes('not junk') || text.includes('not spam')) {{
+                        mi.click();
+                        return 'success';
+                    }}
+                }}
+
+                // Try "Move to" -> "Inbox" approach
+                for (const mi of menuItems) {{
+                    const text = mi.textContent?.toLowerCase() || '';
+                    if (text.includes('move to') || text.includes('move')) {{
+                        mi.click();
+                        await new Promise(r => setTimeout(r, 500));
+
+                        const subItems = document.querySelectorAll('[role="menuitem"]');
+                        for (const si of subItems) {{
+                            if (si.textContent?.toLowerCase().includes('inbox')) {{
+                                si.click();
+                                return 'success';
+                            }}
+                        }}
+                    }}
+                }}
+
+                return 'menu_not_found';
+            }})()
+        "#,
+            id
+        );
+
+        let result = page.evaluate(script).await?;
+        let status = result.into_value::<String>().unwrap_or_default();
+
+        match status.as_str() {
+            "success" => Ok(()),
+            "not_found" => anyhow::bail!("Message not found in Junk folder: {}", id),
+            _ => anyhow::bail!("Failed to move to inbox: {}", status),
+        }
+    }
+
+    pub async fn mark_read(&self, id: &str) -> Result<()> {
+        let browser = connect_or_start_browser(self.port).await?;
+        let page = find_outlook_page(&browser).await?;
+
+        let script = format!(
+            r#"
+            (async () => {{
+                const item = document.querySelector('[data-convid="{}"]');
+                if (!item) return 'not_found';
+
+                const event = new MouseEvent('contextmenu', {{
+                    bubbles: true,
+                    cancelable: true,
+                    view: window,
+                    button: 2
+                }});
+                item.dispatchEvent(event);
+
+                await new Promise(r => setTimeout(r, 500));
+
+                const menuItems = document.querySelectorAll('[role="menuitem"]');
+                for (const mi of menuItems) {{
+                    const text = mi.textContent?.toLowerCase() || '';
+                    if (text.includes('mark as read') || text.includes('mark read')) {{
+                        mi.click();
+                        return 'success';
+                    }}
+                }}
+
+                return 'menu_not_found';
+            }})()
+        "#,
+            id
+        );
+
+        let result = page.evaluate(script).await?;
+        let status = result.into_value::<String>().unwrap_or_default();
+
+        match status.as_str() {
+            "success" => Ok(()),
+            "not_found" => anyhow::bail!("Message not found: {}", id),
+            _ => anyhow::bail!("Failed to mark as read: {}", status),
+        }
+    }
+
+    pub async fn mark_unread(&self, id: &str) -> Result<()> {
+        let browser = connect_or_start_browser(self.port).await?;
+        let page = find_outlook_page(&browser).await?;
+
+        let script = format!(
+            r#"
+            (async () => {{
+                const item = document.querySelector('[data-convid="{}"]');
+                if (!item) return 'not_found';
+
+                const event = new MouseEvent('contextmenu', {{
+                    bubbles: true,
+                    cancelable: true,
+                    view: window,
+                    button: 2
+                }});
+                item.dispatchEvent(event);
+
+                await new Promise(r => setTimeout(r, 500));
+
+                const menuItems = document.querySelectorAll('[role="menuitem"]');
+                for (const mi of menuItems) {{
+                    const text = mi.textContent?.toLowerCase() || '';
+                    if (text.includes('mark as unread') || text.includes('mark unread')) {{
+                        mi.click();
+                        return 'success';
+                    }}
+                }}
+
+                return 'menu_not_found';
+            }})()
+        "#,
+            id
+        );
+
+        let result = page.evaluate(script).await?;
+        let status = result.into_value::<String>().unwrap_or_default();
+
+        match status.as_str() {
+            "success" => Ok(()),
+            "not_found" => anyhow::bail!("Message not found: {}", id),
+            _ => anyhow::bail!("Failed to mark as unread: {}", status),
+        }
+    }
+
+    pub async fn clear_labels(&self, id: &str) -> Result<()> {
+        let browser = connect_or_start_browser(self.port).await?;
+        let page = find_outlook_page(&browser).await?;
+
+        let script = format!(
+            r#"
+            (async () => {{
+                const item = document.querySelector('[data-convid="{}"]');
+                if (!item) return 'not_found';
+
+                const event = new MouseEvent('contextmenu', {{
+                    bubbles: true,
+                    cancelable: true,
+                    view: window,
+                    button: 2
+                }});
+                item.dispatchEvent(event);
+
+                await new Promise(r => setTimeout(r, 500));
+
+                // Find and click "Categorize" menu item
+                const menuItems = document.querySelectorAll('[role="menuitem"], [role="menuitemcheckbox"]');
+                for (const mi of menuItems) {{
+                    if (mi.textContent?.includes('Categorize')) {{
+                        mi.click();
+                        await new Promise(r => setTimeout(r, 500));
+                        break;
+                    }}
+                }}
+
+                // Find and click "Clear categories" or similar
+                const categoryItems = document.querySelectorAll('[role="menuitem"], [role="menuitemcheckbox"]');
+                for (const ci of categoryItems) {{
+                    const text = ci.textContent?.toLowerCase() || '';
+                    if (text.includes('clear') && text.includes('categor')) {{
+                        ci.click();
+                        return 'success';
+                    }}
+                }}
+
+                return 'clear_not_found';
+            }})()
+        "#,
+            id
+        );
+
+        let result = page.evaluate(script).await?;
+        let status = result.into_value::<String>().unwrap_or_default();
+
+        match status.as_str() {
+            "success" => Ok(()),
+            "not_found" => anyhow::bail!("Message not found: {}", id),
+            "clear_not_found" => anyhow::bail!("Clear categories option not found"),
+            _ => anyhow::bail!("Failed to clear labels: {}", status),
+        }
     }
 
     pub async fn list_labels(&self) -> Result<Vec<String>> {

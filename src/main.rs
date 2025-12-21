@@ -26,6 +26,12 @@ enum Commands {
         #[arg(short = 'n', long, default_value = "20")]
         max: u32,
     },
+    /// List junk/spam folder messages
+    ListSpam {
+        /// Maximum number of messages
+        #[arg(short = 'n', long, default_value = "20")]
+        max: u32,
+    },
     /// Read a specific message by ID
     Read {
         /// Message ID
@@ -52,6 +58,35 @@ enum Commands {
         id: String,
         /// Label to add
         label: String,
+    },
+    /// Remove label/category from message
+    Unlabel {
+        /// Message ID
+        id: String,
+        /// Label to remove
+        label: String,
+    },
+    /// List available labels/categories
+    Labels,
+    /// Move message from Junk to Inbox
+    Unspam {
+        /// Message ID
+        id: String,
+    },
+    /// Mark message as read
+    MarkRead {
+        /// Message ID
+        id: String,
+    },
+    /// Mark message as unread
+    MarkUnread {
+        /// Message ID
+        id: String,
+    },
+    /// Remove all labels from message
+    ClearLabels {
+        /// Message ID
+        id: String,
     },
     /// Test connection to browser
     Test,
@@ -105,6 +140,22 @@ async fn main() -> Result<()> {
                 }
             }
         }
+        Commands::ListSpam { max } => {
+            let client = Client::new(port);
+            let messages = client.list_spam(max).await?;
+
+            if cli.json {
+                println!("{}", serde_json::to_string(&messages)?);
+            } else if messages.is_empty() {
+                println!("No spam messages found.");
+            } else {
+                for msg in &messages {
+                    let from = msg.from.as_deref().unwrap_or("Unknown");
+                    let subject = msg.subject.as_deref().unwrap_or("(no subject)");
+                    println!("{} | {} | {}", msg.id, from, subject);
+                }
+            }
+        }
         Commands::Read { id } => {
             let client = Client::new(port);
             let msg = client.get_message(&id).await?;
@@ -140,6 +191,42 @@ async fn main() -> Result<()> {
             let client = Client::new(port);
             client.add_label(&id, &label).await?;
             println!("Added label '{}' to: {}", label, id);
+        }
+        Commands::Unlabel { id, label } => {
+            let client = Client::new(port);
+            client.remove_label(&id, &label).await?;
+            println!("Removed label '{}' from: {}", label, id);
+        }
+        Commands::Labels => {
+            let client = Client::new(port);
+            let labels = client.list_labels().await?;
+            if cli.json {
+                println!("{}", serde_json::to_string(&labels)?);
+            } else {
+                for label in &labels {
+                    println!("{}", label);
+                }
+            }
+        }
+        Commands::Unspam { id } => {
+            let client = Client::new(port);
+            client.unspam(&id).await?;
+            println!("Moved to inbox: {}", id);
+        }
+        Commands::MarkRead { id } => {
+            let client = Client::new(port);
+            client.mark_read(&id).await?;
+            println!("Marked as read: {}", id);
+        }
+        Commands::MarkUnread { id } => {
+            let client = Client::new(port);
+            client.mark_unread(&id).await?;
+            println!("Marked as unread: {}", id);
+        }
+        Commands::ClearLabels { id } => {
+            let client = Client::new(port);
+            client.clear_labels(&id).await?;
+            println!("Cleared labels from: {}", id);
         }
         Commands::Test => {
             test_connection(port).await?;
