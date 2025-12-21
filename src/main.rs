@@ -132,29 +132,49 @@ async fn list_messages(port: u16, max: u32, json_output: bool) -> Result<()> {
                     }
                 });
 
-                // aria-label format: "Sender Subject Time Preview..."
+                // aria-label format: "[Unread] Sender Subject Time Preview..."
                 let from = '';
                 let subject = '';
                 let preview = '';
 
-                // Try to find sender name - usually at start, before subject line
-                const match = ariaLabel.match(/^(.*?)\s+(Re:|Fw:|New\s|Your\s|Action|Urgent|Important|Microsoft|Amazon|Google|Welcome)/i);
+                // Remove "Unread" prefix if present
+                let label = ariaLabel.replace(/^Unread\s+/i, '').trim();
+
+                // Common subject starters to find where sender ends
+                const subjectStarters = /\s+(Re:|Fw:|FW:|RE:|New\s|Your\s|Action\s|Welcome|Microsoft|Amazon|Google|Apple|Thanks|Thank\s|Confirm|Verify|Update|Alert|Notice|Reminder|Invoice|Order|Shipping|Delivery)/i;
+                const match = label.match(subjectStarters);
+
                 if (match) {
-                    from = match[1].trim();
-                    const rest = ariaLabel.substring(match[1].length).trim();
-                    const timeParts = rest.split(/\d{1,2}:\d{2}|\d{4}-\d{2}-\d{2}/);
+                    from = label.substring(0, match.index).trim();
+                    const rest = label.substring(match.index).trim();
+                    // Split on time pattern to separate subject from preview
+                    const timeParts = rest.split(/\s+\d{1,2}:\d{2}\s+|\s+\d{4}-\d{2}-\d{2}\s+/);
                     subject = timeParts[0]?.trim() || '';
                     preview = timeParts.slice(1).join(' ').trim();
                 } else {
-                    // Fallback: split on double space or assume first part is sender
-                    const parts = ariaLabel.split(/\s{2,}/);
-                    from = parts[0] || '';
-                    subject = parts[1] || '';
-                    preview = parts.slice(2).join(' ');
+                    // Fallback: look for time pattern to split
+                    const timeSplit = label.split(/\s+\d{1,2}:\d{2}\s+|\s+\d{4}-\d{2}-\d{2}\s+/);
+                    if (timeSplit.length > 1) {
+                        // First part has sender + subject, need to split by common patterns
+                        const firstPart = timeSplit[0];
+                        // Try splitting on < which often separates display name from email
+                        const emailMatch = firstPart.match(/^(.+?)<[^>]+>\s*(.*)/);
+                        if (emailMatch) {
+                            from = emailMatch[1].trim();
+                            subject = emailMatch[2].trim();
+                        } else {
+                            // Assume first few words are sender
+                            const words = firstPart.split(/\s+/);
+                            from = words.slice(0, 3).join(' ');
+                            subject = words.slice(3).join(' ');
+                        }
+                        preview = timeSplit.slice(1).join(' ').trim();
+                    } else {
+                        from = label;
+                    }
                 }
 
-                // Clean subject - remove labels and Unread marker
-                subject = subject.replace(/^Unread\s*/i, '');
+                // Clean subject - remove labels
                 labels.forEach(label => { subject = subject.replace(label, ''); });
                 subject = subject.trim();
 
