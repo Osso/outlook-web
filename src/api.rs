@@ -28,6 +28,28 @@ impl Client {
         let browser = connect_or_start_browser(self.port).await?;
         let page = find_outlook_page(&browser).await?;
 
+        // Ensure we're in the inbox (base URL /mail/0/ is also inbox)
+        let nav_script = r#"
+            (() => {
+                const url = window.location.href;
+                // Check if already in inbox: either /inbox or base /mail/N/ with optional message ID
+                if (url.includes('/inbox') || url.match(/\/mail\/\d+\/?($|id\/)/)) return 'already_inbox';
+                const match = url.match(/(https:\/\/outlook\.[^\/]+\/mail\/\d+\/)/);
+                if (match) {
+                    window.location.href = match[1] + 'inbox';
+                    return 'navigating';
+                }
+                return 'already_inbox';
+            })()
+        "#;
+
+        let nav_result = page.evaluate(nav_script).await?;
+        let nav_status = nav_result.into_value::<String>().unwrap_or_default();
+
+        if nav_status == "navigating" {
+            tokio::time::sleep(tokio::time::Duration::from_secs(2)).await;
+        }
+
         let script = r#"
             (() => {
                 const messages = [];
@@ -114,40 +136,28 @@ impl Client {
         let browser = connect_or_start_browser(self.port).await?;
         let page = find_outlook_page(&browser).await?;
 
-        // Navigate to Junk folder
+        // Navigate to Junk folder via URL
         let nav_script = r#"
-            (async () => {
-                // Find and click Junk folder in the folder list
-                const folders = document.querySelectorAll('[role="treeitem"], [data-folder-name]');
-                for (const folder of folders) {
-                    const text = folder.textContent?.toLowerCase() || '';
-                    const name = folder.getAttribute('data-folder-name')?.toLowerCase() || '';
-                    if (text.includes('junk') || name.includes('junk') ||
-                        text.includes('spam') || name.includes('spam')) {
-                        folder.click();
-                        return 'success';
-                    }
+            (() => {
+                const url = window.location.href;
+                // Extract base URL (e.g., https://outlook.live.com/mail/0/)
+                const match = url.match(/(https:\/\/outlook\.[^\/]+\/mail\/\d+\/)/);
+                if (match) {
+                    window.location.href = match[1] + 'junkemail';
+                    return 'navigating';
                 }
-
-                // Try clicking on folder pane items with aria-label
-                const ariaFolders = document.querySelectorAll('[aria-label*="Junk"], [aria-label*="junk"]');
-                if (ariaFolders.length > 0) {
-                    ariaFolders[0].click();
-                    return 'success';
-                }
-
-                return 'folder_not_found';
+                return 'url_parse_failed';
             })()
         "#;
 
         let nav_result = page.evaluate(nav_script).await?;
         let nav_status = nav_result.into_value::<String>().unwrap_or_default();
 
-        if nav_status == "folder_not_found" {
-            anyhow::bail!("Junk folder not found. Make sure the folder pane is visible.");
+        if nav_status == "url_parse_failed" {
+            anyhow::bail!("Failed to parse Outlook URL for navigation");
         }
 
-        // Wait for folder to load
+        // Wait for navigation and page load
         tokio::time::sleep(tokio::time::Duration::from_secs(2)).await;
 
         // Now list messages (same logic as list_messages)
@@ -538,35 +548,24 @@ impl Client {
         let browser = connect_or_start_browser(self.port).await?;
         let page = find_outlook_page(&browser).await?;
 
-        // Navigate to Junk folder first
+        // Navigate to Junk folder via URL
         let nav_script = r#"
-            (async () => {
-                const folders = document.querySelectorAll('[role="treeitem"], [data-folder-name]');
-                for (const folder of folders) {
-                    const text = folder.textContent?.toLowerCase() || '';
-                    const name = folder.getAttribute('data-folder-name')?.toLowerCase() || '';
-                    if (text.includes('junk') || name.includes('junk') ||
-                        text.includes('spam') || name.includes('spam')) {
-                        folder.click();
-                        return 'success';
-                    }
+            (() => {
+                const url = window.location.href;
+                const match = url.match(/(https:\/\/outlook\.[^\/]+\/mail\/\d+\/)/);
+                if (match) {
+                    window.location.href = match[1] + 'junkemail';
+                    return 'navigating';
                 }
-
-                const ariaFolders = document.querySelectorAll('[aria-label*="Junk"], [aria-label*="junk"]');
-                if (ariaFolders.length > 0) {
-                    ariaFolders[0].click();
-                    return 'success';
-                }
-
-                return 'folder_not_found';
+                return 'url_parse_failed';
             })()
         "#;
 
         let nav_result = page.evaluate(nav_script).await?;
         let nav_status = nav_result.into_value::<String>().unwrap_or_default();
 
-        if nav_status == "folder_not_found" {
-            anyhow::bail!("Junk folder not found. Make sure the folder pane is visible.");
+        if nav_status == "url_parse_failed" {
+            anyhow::bail!("Failed to parse Outlook URL for navigation");
         }
 
         tokio::time::sleep(tokio::time::Duration::from_secs(2)).await;
