@@ -130,16 +130,16 @@ pub async fn connect_browser(port: u16) -> Result<Browser> {
 
 pub async fn find_outlook_page(browser: &Browser) -> Result<chromiumoxide::Page> {
     let pages = browser.pages().await?;
+    let timeout = std::time::Duration::from_secs(2);
 
     for page in pages {
-        if let Ok(url) = page.url().await {
-            if let Some(u) = url {
-                if u.contains("outlook.office.com")
-                    || u.contains("outlook.live.com")
-                    || u.contains("outlook.office365.com")
-                {
-                    return Ok(page);
-                }
+        let url_result = tokio::time::timeout(timeout, page.url()).await;
+        if let Ok(Ok(Some(u))) = url_result {
+            if u.contains("outlook.office.com")
+                || u.contains("outlook.live.com")
+                || u.contains("outlook.office365.com")
+            {
+                return Ok(page);
             }
         }
     }

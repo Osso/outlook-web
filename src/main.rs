@@ -246,14 +246,16 @@ async fn test_connection(port: u16) -> Result<()> {
     println!("Connected to browser successfully!");
     println!("Found {} pages:", pages.len());
 
+    let timeout = std::time::Duration::from_secs(2);
     for page in &pages {
-        if let Ok(Some(url)) = page.url().await {
+        let url_result = tokio::time::timeout(timeout, page.url()).await;
+        if let Ok(Ok(Some(url))) = url_result {
             let is_outlook = url.contains("outlook");
             let marker = if is_outlook { " <-- Outlook" } else { "" };
-            let title = page
-                .evaluate("document.title")
+            let title = tokio::time::timeout(timeout, page.evaluate("document.title"))
                 .await
                 .ok()
+                .and_then(|r| r.ok())
                 .and_then(|r| r.into_value::<String>().ok())
                 .unwrap_or_default();
             println!("  {}{}", title, marker);
@@ -262,7 +264,12 @@ async fn test_connection(port: u16) -> Result<()> {
 
     match browser::find_outlook_page(&browser_instance).await {
         Ok(page) => {
-            let url = page.url().await?.unwrap_or_default();
+            let url = tokio::time::timeout(timeout, page.url())
+                .await
+                .ok()
+                .and_then(|r| r.ok())
+                .flatten()
+                .unwrap_or_default();
             println!("\nOutlook tab found: {}", url);
         }
         Err(_) => {
