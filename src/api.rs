@@ -303,126 +303,69 @@ impl Client {
 
         let result = page.evaluate(read_script).await?;
         let message_str = result.into_value::<String>().unwrap_or_default();
-        let message: Message = serde_json::from_str(&message_str)
-            .context("Failed to parse message")?;
+        let message: Message =
+            serde_json::from_str(&message_str).context("Failed to parse message")?;
         Ok(message)
     }
 
     pub async fn add_label(&self, id: &str, label: &str) -> Result<()> {
+        use crate::menu;
+
         let browser = connect_or_start_browser(self.port).await?;
         let page = find_outlook_page(&browser).await?;
 
-        // Right-click to open context menu, then categorize
-        let script = format!(
-            r#"
-            (async () => {{
-                const item = document.querySelector('[data-convid="{}"]');
-                if (!item) return 'not_found';
+        // Wait for the message to be visible
+        if !menu::wait_for_message(&page, id).await? {
+            anyhow::bail!("Message not found or not visible: {}", id);
+        }
 
-                // Right-click on the item
-                const event = new MouseEvent('contextmenu', {{
-                    bubbles: true,
-                    cancelable: true,
-                    view: window,
-                    button: 2
-                }});
-                item.dispatchEvent(event);
+        // Step 1: Check if context menu is open, if not right-click to open it
+        if !menu::is_context_menu_open(&page).await? {
+            let (x, y) = menu::get_message_position(&page, id)
+                .await?
+                .ok_or_else(|| anyhow::anyhow!("Message not found: {}", id))?;
 
-                await new Promise(r => setTimeout(r, 500));
+            menu::right_click(&page, x, y).await?;
+            tokio::time::sleep(tokio::time::Duration::from_millis(1000)).await;
 
-                // Find and click "Categorize" menu item
-                const menuItems = document.querySelectorAll('[role="menuitem"], [role="menuitemcheckbox"]');
-                for (const mi of menuItems) {{
-                    if (mi.textContent?.includes('Categorize')) {{
-                        mi.click();
-                        await new Promise(r => setTimeout(r, 500));
-                        break;
-                    }}
-                }}
+            if !menu::is_context_menu_open(&page).await? {
+                anyhow::bail!("Context menu didn't open");
+            }
+        }
 
-                // Find and click the specific category
-                const categoryItems = document.querySelectorAll('[role="menuitemcheckbox"], [role="menuitem"]');
-                for (const ci of categoryItems) {{
-                    if (ci.textContent?.trim() === '{}') {{
-                        ci.click();
-                        return 'success';
-                    }}
-                }}
+        // Step 2: Check if category submenu is open, if not click Categorize
+        if !menu::is_category_visible(&page, label).await? {
+            if !menu::is_categorize_button_visible(&page).await? {
+                anyhow::bail!("Categorize button not found");
+            }
 
-                // Category might need to be created - look for "New category" or similar
-                return 'category_not_found';
-            }})()
-        "#,
-            id, label
-        );
+            if !menu::click_categorize(&page).await? {
+                anyhow::bail!("Failed to click Categorize");
+            }
+            tokio::time::sleep(tokio::time::Duration::from_millis(800)).await;
 
-        let result = page.evaluate(script).await?;
-        let status = result.into_value::<String>().unwrap_or_default();
+            if !menu::is_category_visible(&page, label).await? {
+                anyhow::bail!("Category submenu didn't open");
+            }
+        }
 
-        match status.as_str() {
+        // Step 3: Click on the category
+        let result = menu::click_category(&page, label).await?;
+
+        match result.status.as_str() {
             "success" => Ok(()),
-            "not_found" => anyhow::bail!("Message not found: {}", id),
-            "category_not_found" => anyhow::bail!("Category not found: {}. Create it in Outlook first.", label),
-            _ => anyhow::bail!("Failed to add label: {}", status),
+            "category_not_found" => anyhow::bail!(
+                "Category '{}' not found. Available: {:?}",
+                label,
+                result.categories
+            ),
+            _ => anyhow::bail!("Failed to add label: {}", result.status),
         }
     }
 
     pub async fn remove_label(&self, id: &str, label: &str) -> Result<()> {
-        let browser = connect_or_start_browser(self.port).await?;
-        let page = find_outlook_page(&browser).await?;
-
-        // Right-click to open context menu, then categorize and uncheck the label
-        let script = format!(
-            r#"
-            (async () => {{
-                const item = document.querySelector('[data-convid="{}"]');
-                if (!item) return 'not_found';
-
-                // Right-click on the item
-                const event = new MouseEvent('contextmenu', {{
-                    bubbles: true,
-                    cancelable: true,
-                    view: window,
-                    button: 2
-                }});
-                item.dispatchEvent(event);
-
-                await new Promise(r => setTimeout(r, 500));
-
-                // Find and click "Categorize" menu item
-                const menuItems = document.querySelectorAll('[role="menuitem"], [role="menuitemcheckbox"]');
-                for (const mi of menuItems) {{
-                    if (mi.textContent?.includes('Categorize')) {{
-                        mi.click();
-                        await new Promise(r => setTimeout(r, 500));
-                        break;
-                    }}
-                }}
-
-                // Find and click the specific category (clicking again removes it)
-                const categoryItems = document.querySelectorAll('[role="menuitemcheckbox"], [role="menuitem"]');
-                for (const ci of categoryItems) {{
-                    if (ci.textContent?.trim() === '{}') {{
-                        ci.click();
-                        return 'success';
-                    }}
-                }}
-
-                return 'category_not_found';
-            }})()
-        "#,
-            id, label
-        );
-
-        let result = page.evaluate(script).await?;
-        let status = result.into_value::<String>().unwrap_or_default();
-
-        match status.as_str() {
-            "success" => Ok(()),
-            "not_found" => anyhow::bail!("Message not found: {}", id),
-            "category_not_found" => anyhow::bail!("Category not found: {}", label),
-            _ => anyhow::bail!("Failed to remove label: {}", status),
-        }
+        // Remove label is the same as add label - clicking toggles the category
+        self.add_label(id, label).await
     }
 
     pub async fn archive(&self, id: &str) -> Result<()> {
