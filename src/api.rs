@@ -368,6 +368,67 @@ impl Client {
         self.add_label(id, label).await
     }
 
+    pub async fn get_unsubscribe_url(&self, id: &str) -> Result<Option<String>> {
+        let browser = connect_or_start_browser(self.port).await?;
+        let page = find_outlook_page(&browser).await?;
+
+        // Click on message to open it
+        let click_script = format!(
+            r#"
+            (() => {{
+                const item = document.querySelector('[data-convid="{}"]');
+                if (item) {{
+                    item.click();
+                    return true;
+                }}
+                return false;
+            }})()
+        "#,
+            id
+        );
+
+        let clicked = page.evaluate(click_script).await?;
+        if !clicked.into_value::<bool>().unwrap_or(false) {
+            anyhow::bail!("Message not found: {}", id);
+        }
+
+        tokio::time::sleep(tokio::time::Duration::from_secs(2)).await;
+
+        // Search for unsubscribe links in the message body
+        let script = r#"
+            (() => {
+                const bodyEl = document.querySelector('div[role="document"]');
+                if (!bodyEl) return null;
+
+                // Look for links with "unsubscribe" in text or href
+                const links = bodyEl.querySelectorAll('a[href]');
+                for (const link of links) {
+                    const href = link.href || '';
+                    const text = link.textContent?.toLowerCase() || '';
+                    if (text.includes('unsubscribe') ||
+                        text.includes('opt out') ||
+                        text.includes('opt-out') ||
+                        href.toLowerCase().includes('unsubscribe') ||
+                        href.toLowerCase().includes('optout')) {
+                        return href;
+                    }
+                }
+
+                // Also check for List-Unsubscribe in any visible headers
+                const allText = bodyEl.innerText || '';
+                const match = allText.match(/unsubscribe[:\s]*(https?:\/\/[^\s<>"]+)/i);
+                if (match) {
+                    return match[1];
+                }
+
+                return null;
+            })()
+        "#;
+
+        let result = page.evaluate(script).await?;
+        Ok(result.into_value::<Option<String>>().unwrap_or(None))
+    }
+
     pub async fn archive(&self, id: &str) -> Result<()> {
         let browser = connect_or_start_browser(self.port).await?;
         let page = find_outlook_page(&browser).await?;

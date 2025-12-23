@@ -88,6 +88,13 @@ enum Commands {
         /// Message ID
         id: String,
     },
+    /// Unsubscribe from a mailing list (opens unsubscribe link)
+    Unsubscribe {
+        /// Message ID
+        id: String,
+    },
+    /// Sync labels: show categories used on messages but not in master list
+    SyncLabels,
     /// Test connection to browser
     Test,
     /// Inspect DOM to find selectors
@@ -227,6 +234,43 @@ async fn main() -> Result<()> {
             let client = Client::new(port);
             client.clear_labels(&id).await?;
             println!("Cleared labels from: {}", id);
+        }
+        Commands::Unsubscribe { id } => {
+            let client = Client::new(port);
+            if let Some(url) = client.get_unsubscribe_url(&id).await? {
+                println!("Opening unsubscribe link: {}", url);
+                open::that(&url)?;
+            } else {
+                anyhow::bail!("No unsubscribe link found in message");
+            }
+        }
+        Commands::SyncLabels => {
+            let client = Client::new(port);
+            let known_labels = client.list_labels().await?;
+            let known_set: std::collections::HashSet<String> =
+                known_labels.into_iter().map(|l| l.to_lowercase()).collect();
+
+            // Scan messages for categories
+            let messages = client.list_messages(100).await?;
+            let mut found: std::collections::HashSet<String> = std::collections::HashSet::new();
+
+            for msg in &messages {
+                for label in &msg.labels {
+                    if !known_set.contains(&label.to_lowercase()) {
+                        found.insert(label.clone());
+                    }
+                }
+            }
+
+            if found.is_empty() {
+                println!("All categories are in the known list.");
+            } else {
+                println!("Categories found on messages but not in known list:");
+                for label in found {
+                    println!("  - {}", label);
+                }
+                println!("\nAdd these to list_labels() in src/api.rs");
+            }
         }
         Commands::Test => {
             test_connection(port).await?;
