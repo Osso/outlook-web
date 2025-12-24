@@ -97,30 +97,15 @@ impl Client {
     }
 
     pub async fn get_unsubscribe_url(&self, id: &str) -> Result<Option<String>> {
+        use crate::browser::click_element;
+
         let browser = connect_or_start_browser(self.port).await?;
         let page = find_outlook_page(&browser).await?;
 
-        // Click on message to open it
-        let click_script = format!(
-            r#"
-            (() => {{
-                const item = document.querySelector('[data-convid="{}"]');
-                if (item) {{
-                    item.click();
-                    return true;
-                }}
-                return false;
-            }})()
-        "#,
-            id
-        );
-
-        let clicked = page.evaluate(click_script).await?;
-        if !clicked.into_value::<bool>().unwrap_or(false) {
+        let selector = format!("[data-convid=\"{}\"]", id);
+        if !click_element(&page, &selector, Some(2000)).await? {
             anyhow::bail!("Message not found: {}", id);
         }
-
-        tokio::time::sleep(tokio::time::Duration::from_secs(2)).await;
 
         // Search for unsubscribe links in the message body
         let script = r#"
@@ -158,28 +143,15 @@ impl Client {
     }
 
     pub async fn archive(&self, id: &str) -> Result<()> {
+        use crate::browser::click_element;
+
         let browser = connect_or_start_browser(self.port).await?;
         let page = find_outlook_page(&browser).await?;
 
-        // Select message and press 'e' for archive (Outlook shortcut)
-        let click_script = format!(
-            r#"
-            (() => {{
-                const item = document.querySelector('[data-convid="{}"]');
-                if (!item) return false;
-                item.click();
-                return true;
-            }})()
-        "#,
-            id
-        );
-
-        let clicked = page.evaluate(click_script).await?;
-        if !clicked.into_value::<bool>().unwrap_or(false) {
+        let selector = format!("[data-convid=\"{}\"]", id);
+        if !click_element(&page, &selector, None).await? {
             anyhow::bail!("Message not found: {}", id);
         }
-
-        tokio::time::sleep(tokio::time::Duration::from_millis(300)).await;
 
         // Press 'e' for archive
         page.evaluate("document.dispatchEvent(new KeyboardEvent('keydown', { key: 'e', code: 'KeyE', bubbles: true }))").await?;
@@ -189,28 +161,15 @@ impl Client {
     }
 
     pub async fn trash(&self, id: &str) -> Result<()> {
+        use crate::browser::click_element;
+
         let browser = connect_or_start_browser(self.port).await?;
         let page = find_outlook_page(&browser).await?;
 
-        // Select message and press Delete
-        let click_script = format!(
-            r#"
-            (() => {{
-                const item = document.querySelector('[data-convid="{}"]');
-                if (!item) return false;
-                item.click();
-                return true;
-            }})()
-        "#,
-            id
-        );
-
-        let clicked = page.evaluate(click_script).await?;
-        if !clicked.into_value::<bool>().unwrap_or(false) {
+        let selector = format!("[data-convid=\"{}\"]", id);
+        if !click_element(&page, &selector, None).await? {
             anyhow::bail!("Message not found: {}", id);
         }
-
-        tokio::time::sleep(tokio::time::Duration::from_millis(300)).await;
 
         // Press Delete key
         page.evaluate("document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Delete', code: 'Delete', bubbles: true }))").await?;

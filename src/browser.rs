@@ -170,6 +170,36 @@ pub async fn navigate_to_inbox(page: &chromiumoxide::Page) -> Result<()> {
     Ok(())
 }
 
+/// Click on an element by selector, returns true if found and clicked
+/// Sleeps after clicking for the specified duration (default 300ms)
+pub async fn click_element(
+    page: &chromiumoxide::Page,
+    selector: &str,
+    sleep_ms: Option<u64>,
+) -> Result<bool> {
+    let script = format!(
+        r#"
+        (() => {{
+            const item = document.querySelector('{}');
+            if (!item) return false;
+            item.click();
+            return true;
+        }})()
+    "#,
+        selector
+    );
+
+    let result = page.evaluate(script).await?;
+    let clicked = result.into_value::<bool>().unwrap_or(false);
+
+    if clicked {
+        let ms = sleep_ms.unwrap_or(300);
+        tokio::time::sleep(tokio::time::Duration::from_millis(ms)).await;
+    }
+
+    Ok(clicked)
+}
+
 /// Navigate to junk/spam folder
 pub async fn navigate_to_junk(page: &chromiumoxide::Page) -> Result<()> {
     let script = r#"

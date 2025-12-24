@@ -158,29 +158,15 @@ pub async fn list_spam(port: u16, max: u32) -> Result<Vec<Message>> {
 }
 
 pub async fn get_message(port: u16, id: &str) -> Result<Message> {
+    use crate::browser::click_element;
+
     let browser = connect_or_start_browser(port).await?;
     let page = find_outlook_page(&browser).await?;
 
-    let click_script = format!(
-        r#"
-        (() => {{
-            const item = document.querySelector('[data-convid="{}"]');
-            if (item) {{
-                item.click();
-                return true;
-            }}
-            return false;
-        }})()
-    "#,
-        id
-    );
-
-    let clicked = page.evaluate(click_script).await?;
-    if !clicked.into_value::<bool>().unwrap_or(false) {
+    let selector = format!("[data-convid=\"{}\"]", id);
+    if !click_element(&page, &selector, Some(2000)).await? {
         anyhow::bail!("Message not found: {}", id);
     }
-
-    tokio::time::sleep(tokio::time::Duration::from_secs(2)).await;
 
     let read_script = r#"
         (() => {
