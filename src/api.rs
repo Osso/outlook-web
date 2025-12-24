@@ -153,7 +153,7 @@ impl Client {
             anyhow::bail!("Message not found: {}", id);
         }
 
-        press_key(&page, "e", None).await?;
+        press_key(&page, "e", None, None).await?;
         Ok(())
     }
 
@@ -168,7 +168,7 @@ impl Client {
             anyhow::bail!("Message not found: {}", id);
         }
 
-        press_key(&page, "Delete", None).await?;
+        press_key(&page, "Delete", None, None).await?;
         Ok(())
     }
 

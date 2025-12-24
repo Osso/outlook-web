@@ -170,11 +170,13 @@ pub async fn navigate_to_inbox(page: &chromiumoxide::Page) -> Result<()> {
     Ok(())
 }
 
-/// Press a key on the page
+/// Press a key on the page with optional modifiers
 /// For letters, pass lowercase (e.g., "e"). For special keys, pass the key name (e.g., "Delete")
+/// Modifiers: "Ctrl", "Shift", "Alt", "Meta"
 pub async fn press_key(
     page: &chromiumoxide::Page,
     key: &str,
+    modifiers: Option<&[&str]>,
     sleep_ms: Option<u64>,
 ) -> Result<()> {
     // For single lowercase letters, code is "Key" + uppercase
@@ -185,9 +187,15 @@ pub async fn press_key(
         key.to_string()
     };
 
+    let mods = modifiers.unwrap_or(&[]);
+    let ctrl = mods.contains(&"Ctrl");
+    let shift = mods.contains(&"Shift");
+    let alt = mods.contains(&"Alt");
+    let meta = mods.contains(&"Meta");
+
     let script = format!(
-        "document.dispatchEvent(new KeyboardEvent('keydown', {{ key: '{}', code: '{}', bubbles: true }}))",
-        key, code
+        "document.dispatchEvent(new KeyboardEvent('keydown', {{ key: '{}', code: '{}', ctrlKey: {}, shiftKey: {}, altKey: {}, metaKey: {}, bubbles: true }}))",
+        key, code, ctrl, shift, alt, meta
     );
     page.evaluate(script).await?;
 
