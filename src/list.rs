@@ -23,12 +23,8 @@ const EXTRACT_LABELS_JS: &str = r#"
     }
 "#;
 
-pub async fn list_messages(port: u16, max: u32) -> Result<Vec<Message>> {
-    let browser = connect_or_start_browser(port).await?;
-    let page = find_outlook_page(&browser).await?;
-
-    navigate_to_inbox(&page).await?;
-
+/// Extract messages from the current page view
+async fn extract_message_list(page: &chromiumoxide::Page, max: u32) -> Result<Vec<Message>> {
     let script = format!(r#"
         (() => {{
             {extract_labels}
@@ -37,9 +33,7 @@ pub async fn list_messages(port: u16, max: u32) -> Result<Vec<Message>> {
             items.forEach(item => {{
                 const id = item.getAttribute('data-convid');
                 const ariaLabel = item.getAttribute('aria-label') || '';
-                const labels = extractLabels(item);"#,
-        extract_labels = EXTRACT_LABELS_JS
-    ) + r#"
+                const labels = extractLabels(item);
 
                 // aria-label format: "[Unread] Sender Subject Time Preview..."
                 let from = '';
@@ -53,50 +47,50 @@ pub async fn list_messages(port: u16, max: u32) -> Result<Vec<Message>> {
                 const subjectStarters = /\s+(Re:|Fw:|FW:|RE:|New\s|Your\s|Action\s|Welcome|Microsoft|Amazon|Google|Apple|Thanks|Thank\s|Confirm|Verify|Update|Alert|Notice|Reminder|Invoice|Order|Shipping|Delivery)/i;
                 const match = label.match(subjectStarters);
 
-                if (match) {
+                if (match) {{
                     from = label.substring(0, match.index).trim();
                     const rest = label.substring(match.index).trim();
                     // Split on time pattern to separate subject from preview
-                    const timeParts = rest.split(/\s+\d{1,2}:\d{2}\s+|\s+\d{4}-\d{2}-\d{2}\s+/);
+                    const timeParts = rest.split(/\s+\d{{1,2}}:\d{{2}}\s+|\s+\d{{4}}-\d{{2}}-\d{{2}}\s+/);
                     subject = timeParts[0]?.trim() || '';
                     preview = timeParts.slice(1).join(' ').trim();
-                } else {
+                }} else {{
                     // Fallback: look for time pattern to split
-                    const timeSplit = label.split(/\s+\d{1,2}:\d{2}\s+|\s+\d{4}-\d{2}-\d{2}\s+/);
-                    if (timeSplit.length > 1) {
+                    const timeSplit = label.split(/\s+\d{{1,2}}:\d{{2}}\s+|\s+\d{{4}}-\d{{2}}-\d{{2}}\s+/);
+                    if (timeSplit.length > 1) {{
                         // First part has sender + subject, need to split by common patterns
                         const firstPart = timeSplit[0];
                         // Try splitting on < which often separates display name from email
                         const emailMatch = firstPart.match(/^(.+?)<[^>]+>\s*(.*)/);
-                        if (emailMatch) {
+                        if (emailMatch) {{
                             from = emailMatch[1].trim();
                             subject = emailMatch[2].trim();
-                        } else {
+                        }} else {{
                             // Assume first few words are sender
                             const words = firstPart.split(/\s+/);
                             from = words.slice(0, 3).join(' ');
                             subject = words.slice(3).join(' ');
-                        }
+                        }}
                         preview = timeSplit.slice(1).join(' ').trim();
-                    } else {
+                    }} else {{
                         from = label;
-                    }
-                }
+                    }}
+                }}
 
                 // Clean subject - remove labels
-                labels.forEach(label => { subject = subject.replace(label, ''); });
+                labels.forEach(label => {{ subject = subject.replace(label, ''); }});
                 subject = subject.trim();
 
                 // Check for Unread marker
                 const isUnread = ariaLabel.toLowerCase().includes('unread');
 
-                if (id) {
-                    messages.push({ id, subject, from, preview, labels, isUnread });
-                }
-            });
+                if (id) {{
+                    messages.push({{ id, subject, from, preview, labels, isUnread }});
+                }}
+            }});
             return JSON.stringify(messages);
-        })()
-    "#;
+        }})()
+    "#, extract_labels = EXTRACT_LABELS_JS);
 
     let result = page.evaluate(script).await?;
     let messages_str = result.into_value::<String>().unwrap_or_default();
@@ -105,71 +99,20 @@ pub async fn list_messages(port: u16, max: u32) -> Result<Vec<Message>> {
     Ok(parsed)
 }
 
+pub async fn list_messages(port: u16, max: u32) -> Result<Vec<Message>> {
+    let browser = connect_or_start_browser(port).await?;
+    let page = find_outlook_page(&browser).await?;
+    navigate_to_inbox(&page).await?;
+    extract_message_list(&page, max).await
+}
+
 pub async fn list_spam(port: u16, max: u32) -> Result<Vec<Message>> {
     use crate::browser::navigate_to_junk;
 
     let browser = connect_or_start_browser(port).await?;
     let page = find_outlook_page(&browser).await?;
-
     navigate_to_junk(&page).await?;
-
-    let script = r#"
-        (() => {
-            const messages = [];
-            const items = document.querySelectorAll('[data-convid]');
-            items.forEach(item => {
-                const id = item.getAttribute('data-convid');
-                const ariaLabel = item.getAttribute('aria-label') || '';
-
-                let from = '';
-                let subject = '';
-                let preview = '';
-
-                let label = ariaLabel.replace(/^Unread\s+/i, '').trim();
-
-                const subjectStarters = /\s+(Re:|Fw:|FW:|RE:|New\s|Your\s|Action\s|Welcome|Microsoft|Amazon|Google|Apple|Thanks|Thank\s|Confirm|Verify|Update|Alert|Notice|Reminder|Invoice|Order|Shipping|Delivery)/i;
-                const match = label.match(subjectStarters);
-
-                if (match) {
-                    from = label.substring(0, match.index).trim();
-                    const rest = label.substring(match.index).trim();
-                    const timeParts = rest.split(/\s+\d{1,2}:\d{2}\s+|\s+\d{4}-\d{2}-\d{2}\s+/);
-                    subject = timeParts[0]?.trim() || '';
-                    preview = timeParts.slice(1).join(' ').trim();
-                } else {
-                    const timeSplit = label.split(/\s+\d{1,2}:\d{2}\s+|\s+\d{4}-\d{2}-\d{2}\s+/);
-                    if (timeSplit.length > 1) {
-                        const firstPart = timeSplit[0];
-                        const emailMatch = firstPart.match(/^(.+?)<[^>]+>\s*(.*)/);
-                        if (emailMatch) {
-                            from = emailMatch[1].trim();
-                            subject = emailMatch[2].trim();
-                        } else {
-                            const words = firstPart.split(/\s+/);
-                            from = words.slice(0, 3).join(' ');
-                            subject = words.slice(3).join(' ');
-                        }
-                        preview = timeSplit.slice(1).join(' ').trim();
-                    } else {
-                        from = label;
-                    }
-                }
-
-                const isUnread = ariaLabel.toLowerCase().includes('unread');
-
-                if (id) {
-                    messages.push({ id, subject, from, preview, labels: [], isUnread });
-                }
-            });
-            return JSON.stringify(messages);
-        })()
-    "#;
-
-    let result = page.evaluate(script).await?;
-    let messages_str = result.into_value::<String>().unwrap_or_default();
-    let mut parsed: Vec<Message> = serde_json::from_str(&messages_str).unwrap_or_default();
-    parsed.truncate(max as usize);
-    Ok(parsed)
+    extract_message_list(&page, max).await
 }
 
 pub async fn get_message(port: u16, id: &str) -> Result<Message> {
