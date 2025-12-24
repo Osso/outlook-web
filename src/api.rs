@@ -165,60 +165,25 @@ impl Client {
     }
 
     pub async fn mark_spam(&self, id: &str) -> Result<()> {
+        use crate::menu::{click_menu_item, is_context_menu_open, right_click_element};
+
         let browser = connect_or_start_browser(self.port).await?;
         let page = find_outlook_page(&browser).await?;
 
-        // Right-click to open context menu, then mark as junk
-        let script = format!(
-            r#"
-            (async () => {{
-                const item = document.querySelector('[data-convid="{}"]');
-                if (!item) return 'not_found';
+        let selector = format!("[data-convid=\"{}\"]", id);
+        right_click_element(&page, &selector, Some(500)).await?;
 
-                const event = new MouseEvent('contextmenu', {{
-                    bubbles: true,
-                    cancelable: true,
-                    view: window,
-                    button: 2
-                }});
-                item.dispatchEvent(event);
-
-                await new Promise(r => setTimeout(r, 500));
-
-                // Find and click "Report" or "Junk" menu item
-                const menuItems = document.querySelectorAll('[role="menuitem"]');
-                for (const mi of menuItems) {{
-                    const text = mi.textContent?.toLowerCase() || '';
-                    if (text.includes('junk') || text.includes('spam') || text.includes('report')) {{
-                        mi.click();
-                        await new Promise(r => setTimeout(r, 500));
-
-                        // Look for "Junk" submenu option
-                        const subItems = document.querySelectorAll('[role="menuitem"]');
-                        for (const si of subItems) {{
-                            if (si.textContent?.toLowerCase().includes('junk')) {{
-                                si.click();
-                                return 'success';
-                            }}
-                        }}
-                        return 'success';
-                    }}
-                }}
-
-                return 'menu_not_found';
-            }})()
-        "#,
-            id
-        );
-
-        let result = page.evaluate(script).await?;
-        let status = result.into_value::<String>().unwrap_or_default();
-
-        match status.as_str() {
-            "success" => Ok(()),
-            "not_found" => anyhow::bail!("Message not found: {}", id),
-            _ => anyhow::bail!("Failed to mark as spam: {}", status),
+        if !is_context_menu_open(&page).await? {
+            anyhow::bail!("Context menu didn't open");
         }
+
+        // Click "Report" to open submenu
+        click_menu_item(&page, "report", Some(500)).await?;
+
+        // Click "Junk" in submenu
+        click_menu_item(&page, "junk", None).await?;
+
+        Ok(())
     }
 
     pub async fn unspam(&self, id: &str) -> Result<()> {

@@ -4,6 +4,71 @@ use chromiumoxide::cdp::browser_protocol::input::{
     DispatchMouseEventParams, DispatchMouseEventType, MouseButton,
 };
 
+/// Right-click on an element by selector
+pub async fn right_click_element(page: &Page, selector: &str, sleep_ms: Option<u64>) -> Result<()> {
+    let script = format!(
+        r#"
+        (() => {{
+            const item = document.querySelector('{}');
+            if (!item) return false;
+            const rect = item.getBoundingClientRect();
+            return {{ x: rect.x + rect.width / 2, y: rect.y + rect.height / 2 }};
+        }})()
+        "#,
+        selector
+    );
+
+    let result = page.evaluate(script).await?;
+    let pos: Option<serde_json::Value> = result.into_value().ok();
+
+    let (x, y) = pos
+        .and_then(|p| {
+            let x = p.get("x").and_then(|v| v.as_f64())?;
+            let y = p.get("y").and_then(|v| v.as_f64())?;
+            Some((x, y))
+        })
+        .ok_or_else(|| anyhow::anyhow!("Element not found: {}", selector))?;
+
+    right_click(page, x, y).await?;
+
+    let ms = sleep_ms.unwrap_or(300);
+    tokio::time::sleep(tokio::time::Duration::from_millis(ms)).await;
+
+    Ok(())
+}
+
+/// Click on a menu item by text (partial match, case-insensitive)
+pub async fn click_menu_item(page: &Page, text: &str, sleep_ms: Option<u64>) -> Result<()> {
+    let script = format!(
+        r#"
+        (() => {{
+            const items = document.querySelectorAll('[role="menuitem"], [role="menuitemcheckbox"]');
+            for (const item of items) {{
+                const itemText = item.textContent?.toLowerCase() || '';
+                if (itemText.includes('{}')) {{
+                    item.click();
+                    return true;
+                }}
+            }}
+            return false;
+        }})()
+        "#,
+        text.to_lowercase()
+    );
+
+    let result = page.evaluate(script).await?;
+    let clicked = result.into_value::<bool>().unwrap_or(false);
+
+    if !clicked {
+        anyhow::bail!("Menu item not found: {}", text);
+    }
+
+    let ms = sleep_ms.unwrap_or(300);
+    tokio::time::sleep(tokio::time::Duration::from_millis(ms)).await;
+
+    Ok(())
+}
+
 /// Check if the category submenu is open and the specific category is visible
 pub async fn is_category_visible(page: &Page, label: &str) -> Result<bool> {
     let script = format!(
