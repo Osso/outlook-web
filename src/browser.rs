@@ -89,6 +89,28 @@ pub async fn get_browser_ws_url(port: u16) -> Result<String> {
     Ok(resp.ws_url)
 }
 
+/// Check if a browser process is already running
+fn is_browser_running() -> bool {
+    for (_, paths) in BROWSER_CANDIDATES {
+        for path in *paths {
+            if let Some(name) = std::path::Path::new(path).file_name() {
+                let name_str = name.to_string_lossy();
+                // Check if process is running using pgrep
+                if let Ok(output) = Command::new("pgrep")
+                    .arg("-x")
+                    .arg(name_str.as_ref())
+                    .output()
+                {
+                    if output.status.success() {
+                        return true;
+                    }
+                }
+            }
+        }
+    }
+    false
+}
+
 /// Try to connect to browser, starting one if needed
 pub async fn connect_or_start_browser(port: u16) -> Result<Browser> {
     // First try to connect to existing browser
@@ -96,17 +118,26 @@ pub async fn connect_or_start_browser(port: u16) -> Result<Browser> {
         return Ok(browser);
     }
 
+    // Check if browser is running without remote debugging
+    if is_browser_running() {
+        return Err(anyhow!(
+            "Browser is running but remote debugging is not enabled.\n\
+            Please close your browser and run this command again,\n\
+            or restart it with: vivaldi --remote-debugging-port={}", port
+        ));
+    }
+
     // No browser running, start one
     start_browser(port)?;
 
-    // Wait for browser to start and retry connection
-    for attempt in 1..=10 {
+    // Wait for browser to start and retry connection (60 second timeout)
+    for attempt in 1..=120 {
         tokio::time::sleep(tokio::time::Duration::from_millis(500)).await;
         if let Ok(browser) = connect_browser(port).await {
             return Ok(browser);
         }
-        if attempt == 10 {
-            return Err(anyhow!("Browser started but failed to connect after 5 seconds"));
+        if attempt == 120 {
+            return Err(anyhow!("Browser started but failed to connect after 60 seconds"));
         }
     }
 

@@ -4,6 +4,44 @@ use chromiumoxide::cdp::browser_protocol::input::{
     DispatchMouseEventParams, DispatchMouseEventType, MouseButton,
 };
 
+/// Open context menu on an element with retry logic for slower computers
+pub async fn open_context_menu(page: &Page, selector: &str) -> Result<()> {
+    const MAX_ATTEMPTS: u32 = 3;
+
+    for attempt in 1..=MAX_ATTEMPTS {
+        right_click_element(page, selector, Some(500)).await?;
+
+        if is_context_menu_open(page).await? {
+            return Ok(());
+        }
+
+        if attempt < MAX_ATTEMPTS {
+            tokio::time::sleep(tokio::time::Duration::from_millis(300)).await;
+        }
+    }
+
+    anyhow::bail!("Context menu didn't open after {} attempts", MAX_ATTEMPTS)
+}
+
+/// Open context menu at coordinates with retry logic for slower computers
+pub async fn open_context_menu_at(page: &Page, x: f64, y: f64) -> Result<()> {
+    const MAX_ATTEMPTS: u32 = 3;
+
+    for attempt in 1..=MAX_ATTEMPTS {
+        right_click(page, x, y, Some(500)).await?;
+
+        if is_context_menu_open(page).await? {
+            return Ok(());
+        }
+
+        if attempt < MAX_ATTEMPTS {
+            tokio::time::sleep(tokio::time::Duration::from_millis(300)).await;
+        }
+    }
+
+    anyhow::bail!("Context menu didn't open after {} attempts", MAX_ATTEMPTS)
+}
+
 /// Right-click on an element by selector
 pub async fn right_click_element(page: &Page, selector: &str, sleep_ms: Option<u64>) -> Result<()> {
     let script = format!(

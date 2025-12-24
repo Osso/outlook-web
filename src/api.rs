@@ -53,11 +53,7 @@ impl Client {
                 .await?
                 .ok_or_else(|| anyhow::anyhow!("Message not found: {}", id))?;
 
-            menu::right_click(&page, x, y, Some(1000)).await?;
-
-            if !menu::is_context_menu_open(&page).await? {
-                anyhow::bail!("Context menu didn't open");
-            }
+            menu::open_context_menu_at(&page, x, y).await?;
         }
 
         // Step 2: Check if category submenu is open, if not click Categorize
@@ -68,13 +64,22 @@ impl Client {
 
             menu::click_categorize(&page, Some(800)).await?;
 
-            if !menu::is_category_visible(&page, label).await? {
+            // Wait for category to be visible with retries
+            let mut visible = false;
+            for _ in 0..5 {
+                if menu::is_category_visible(&page, label).await? {
+                    visible = true;
+                    break;
+                }
+                tokio::time::sleep(tokio::time::Duration::from_millis(200)).await;
+            }
+            if !visible {
                 anyhow::bail!("Category submenu didn't open");
             }
         }
 
         // Step 3: Click on the category
-        menu::click_category(&page, label, None).await
+        menu::click_category(&page, label, Some(300)).await
     }
 
     pub async fn remove_label(&self, id: &str, label: &str) -> Result<()> {
@@ -151,17 +156,13 @@ impl Client {
     }
 
     pub async fn mark_spam(&self, id: &str) -> Result<()> {
-        use crate::menu::{click_menu_item, is_context_menu_open, right_click_element};
+        use crate::menu::{click_menu_item, open_context_menu};
 
         let browser = connect_or_start_browser(self.port).await?;
         let page = find_outlook_page(&browser).await?;
 
         let selector = crate::browser::message_selector(id);
-        right_click_element(&page, &selector, Some(500)).await?;
-
-        if !is_context_menu_open(&page).await? {
-            anyhow::bail!("Context menu didn't open");
-        }
+        open_context_menu(&page, &selector).await?;
 
         // Click "Report" to open submenu
         click_menu_item(&page, "report", Some(500)).await?;
@@ -174,7 +175,7 @@ impl Client {
 
     pub async fn unspam(&self, id: &str) -> Result<()> {
         use crate::browser::navigate_to_junk;
-        use crate::menu::{click_menu_item, is_context_menu_open, right_click_element};
+        use crate::menu::{click_menu_item, open_context_menu};
 
         let browser = connect_or_start_browser(self.port).await?;
         let page = find_outlook_page(&browser).await?;
@@ -182,11 +183,7 @@ impl Client {
         navigate_to_junk(&page).await?;
 
         let selector = crate::browser::message_selector(id);
-        right_click_element(&page, &selector, Some(500)).await?;
-
-        if !is_context_menu_open(&page).await? {
-            anyhow::bail!("Context menu didn't open");
-        }
+        open_context_menu(&page, &selector).await?;
 
         // Try "Not junk" first, fall back to "Move to" -> "Inbox"
         if click_menu_item(&page, "not junk", None).await.is_err() {
@@ -198,51 +195,39 @@ impl Client {
     }
 
     pub async fn mark_read(&self, id: &str) -> Result<()> {
-        use crate::menu::{click_menu_item, is_context_menu_open, right_click_element};
+        use crate::menu::{click_menu_item, open_context_menu};
 
         let browser = connect_or_start_browser(self.port).await?;
         let page = find_outlook_page(&browser).await?;
 
         let selector = crate::browser::message_selector(id);
-        right_click_element(&page, &selector, Some(500)).await?;
-
-        if !is_context_menu_open(&page).await? {
-            anyhow::bail!("Context menu didn't open");
-        }
+        open_context_menu(&page, &selector).await?;
 
         click_menu_item(&page, "mark as read", None).await?;
         Ok(())
     }
 
     pub async fn mark_unread(&self, id: &str) -> Result<()> {
-        use crate::menu::{click_menu_item, is_context_menu_open, right_click_element};
+        use crate::menu::{click_menu_item, open_context_menu};
 
         let browser = connect_or_start_browser(self.port).await?;
         let page = find_outlook_page(&browser).await?;
 
         let selector = crate::browser::message_selector(id);
-        right_click_element(&page, &selector, Some(500)).await?;
-
-        if !is_context_menu_open(&page).await? {
-            anyhow::bail!("Context menu didn't open");
-        }
+        open_context_menu(&page, &selector).await?;
 
         click_menu_item(&page, "mark as unread", None).await?;
         Ok(())
     }
 
     pub async fn clear_labels(&self, id: &str) -> Result<()> {
-        use crate::menu::{click_menu_item, is_context_menu_open, right_click_element};
+        use crate::menu::{click_menu_item, open_context_menu};
 
         let browser = connect_or_start_browser(self.port).await?;
         let page = find_outlook_page(&browser).await?;
 
         let selector = crate::browser::message_selector(id);
-        right_click_element(&page, &selector, Some(500)).await?;
-
-        if !is_context_menu_open(&page).await? {
-            anyhow::bail!("Context menu didn't open");
-        }
+        open_context_menu(&page, &selector).await?;
 
         click_menu_item(&page, "categorize", Some(500)).await?;
         click_menu_item(&page, "clear", None).await?;
@@ -299,15 +284,29 @@ impl Client {
         // Step 4: Extract categories from the dialog
         let categories = menu::extract_categories_from_dialog(&page).await?;
 
-        // Close dialog by pressing Escape
-        crate::browser::press_key(&page, "Escape", None, None).await?;
+        // Close dialog by clicking the X button or backdrop
+        let close_script = r#"
+            (() => {
+                // Try close button first
+                const closeBtn = document.querySelector('[role="dialog"] button[aria-label*="Close"], [role="dialog"] button[aria-label*="close"]');
+                if (closeBtn) { closeBtn.click(); return true; }
+                // Try clicking backdrop/overlay
+                const backdrop = document.querySelector('[class*="overlay"], [class*="backdrop"]');
+                if (backdrop) { backdrop.click(); return true; }
+                // Click outside dialog
+                document.body.click();
+                return false;
+            })()
+        "#;
+        page.evaluate(close_script).await?;
+        tokio::time::sleep(tokio::time::Duration::from_millis(300)).await;
 
         // If we didn't find categories in the dialog, fall back to the submenu items
         if categories.is_empty() {
             let fallback_categories = menu::extract_categories_from_submenu(&page).await?;
 
-            // Close menu by clicking elsewhere
-            page.evaluate("document.body.click()").await?;
+            // Close menu by pressing Escape
+            crate::browser::press_key(&page, "Escape", None, None).await?;
 
             return Ok(fallback_categories);
         }
