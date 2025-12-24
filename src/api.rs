@@ -246,60 +246,21 @@ impl Client {
     }
 
     pub async fn clear_labels(&self, id: &str) -> Result<()> {
+        use crate::menu::{click_menu_item, is_context_menu_open, right_click_element};
+
         let browser = connect_or_start_browser(self.port).await?;
         let page = find_outlook_page(&browser).await?;
 
-        let script = format!(
-            r#"
-            (async () => {{
-                const item = document.querySelector('[data-convid="{}"]');
-                if (!item) return 'not_found';
+        let selector = format!("[data-convid=\"{}\"]", id);
+        right_click_element(&page, &selector, Some(500)).await?;
 
-                const event = new MouseEvent('contextmenu', {{
-                    bubbles: true,
-                    cancelable: true,
-                    view: window,
-                    button: 2
-                }});
-                item.dispatchEvent(event);
-
-                await new Promise(r => setTimeout(r, 500));
-
-                // Find and click "Categorize" menu item
-                const menuItems = document.querySelectorAll('[role="menuitem"], [role="menuitemcheckbox"]');
-                for (const mi of menuItems) {{
-                    if (mi.textContent?.includes('Categorize')) {{
-                        mi.click();
-                        await new Promise(r => setTimeout(r, 500));
-                        break;
-                    }}
-                }}
-
-                // Find and click "Clear categories" or similar
-                const categoryItems = document.querySelectorAll('[role="menuitem"], [role="menuitemcheckbox"]');
-                for (const ci of categoryItems) {{
-                    const text = ci.textContent?.toLowerCase() || '';
-                    if (text.includes('clear') && text.includes('categor')) {{
-                        ci.click();
-                        return 'success';
-                    }}
-                }}
-
-                return 'clear_not_found';
-            }})()
-        "#,
-            id
-        );
-
-        let result = page.evaluate(script).await?;
-        let status = result.into_value::<String>().unwrap_or_default();
-
-        match status.as_str() {
-            "success" => Ok(()),
-            "not_found" => anyhow::bail!("Message not found: {}", id),
-            "clear_not_found" => anyhow::bail!("Clear categories option not found"),
-            _ => anyhow::bail!("Failed to clear labels: {}", status),
+        if !is_context_menu_open(&page).await? {
+            anyhow::bail!("Context menu didn't open");
         }
+
+        click_menu_item(&page, "categorize", Some(500)).await?;
+        click_menu_item(&page, "clear", None).await?;
+        Ok(())
     }
 
     pub async fn list_labels(&self) -> Result<Vec<String>> {
