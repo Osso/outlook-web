@@ -98,7 +98,7 @@ impl Client {
         let browser = connect_or_start_browser(self.port).await?;
         let page = find_outlook_page(&browser).await?;
 
-        let selector = format!("[data-convid=\"{}\"]", id);
+        let selector = crate::browser::message_selector(id);
         click_element(&page, &selector, Some(2000)).await?;
 
         // Search for unsubscribe links in the message body
@@ -142,7 +142,7 @@ impl Client {
         let browser = connect_or_start_browser(self.port).await?;
         let page = find_outlook_page(&browser).await?;
 
-        let selector = format!("[data-convid=\"{}\"]", id);
+        let selector = crate::browser::message_selector(id);
         click_element(&page, &selector, None).await?;
         press_key(&page, "e", None, None).await?;
         Ok(())
@@ -154,7 +154,7 @@ impl Client {
         let browser = connect_or_start_browser(self.port).await?;
         let page = find_outlook_page(&browser).await?;
 
-        let selector = format!("[data-convid=\"{}\"]", id);
+        let selector = crate::browser::message_selector(id);
         click_element(&page, &selector, None).await?;
         press_key(&page, "Delete", None, None).await?;
         Ok(())
@@ -166,7 +166,7 @@ impl Client {
         let browser = connect_or_start_browser(self.port).await?;
         let page = find_outlook_page(&browser).await?;
 
-        let selector = format!("[data-convid=\"{}\"]", id);
+        let selector = crate::browser::message_selector(id);
         right_click_element(&page, &selector, Some(500)).await?;
 
         if !is_context_menu_open(&page).await? {
@@ -191,7 +191,7 @@ impl Client {
 
         navigate_to_junk(&page).await?;
 
-        let selector = format!("[data-convid=\"{}\"]", id);
+        let selector = crate::browser::message_selector(id);
         right_click_element(&page, &selector, Some(500)).await?;
 
         if !is_context_menu_open(&page).await? {
@@ -213,7 +213,7 @@ impl Client {
         let browser = connect_or_start_browser(self.port).await?;
         let page = find_outlook_page(&browser).await?;
 
-        let selector = format!("[data-convid=\"{}\"]", id);
+        let selector = crate::browser::message_selector(id);
         right_click_element(&page, &selector, Some(500)).await?;
 
         if !is_context_menu_open(&page).await? {
@@ -230,7 +230,7 @@ impl Client {
         let browser = connect_or_start_browser(self.port).await?;
         let page = find_outlook_page(&browser).await?;
 
-        let selector = format!("[data-convid=\"{}\"]", id);
+        let selector = crate::browser::message_selector(id);
         right_click_element(&page, &selector, Some(500)).await?;
 
         if !is_context_menu_open(&page).await? {
@@ -247,7 +247,7 @@ impl Client {
         let browser = connect_or_start_browser(self.port).await?;
         let page = find_outlook_page(&browser).await?;
 
-        let selector = format!("[data-convid=\"{}\"]", id);
+        let selector = crate::browser::message_selector(id);
         right_click_element(&page, &selector, Some(500)).await?;
 
         if !is_context_menu_open(&page).await? {

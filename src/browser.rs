@@ -4,6 +4,11 @@ use futures::StreamExt;
 use serde::Deserialize;
 use std::process::{Command, Stdio};
 
+/// Build a CSS selector for a message by ID
+pub fn message_selector(id: &str) -> String {
+    format!("[data-convid=\"{}\"]", id)
+}
+
 #[derive(Debug, Deserialize)]
 struct BrowserVersion {
     #[serde(rename = "webSocketDebuggerUrl")]

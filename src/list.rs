@@ -163,7 +163,7 @@ pub async fn get_message(port: u16, id: &str) -> Result<Message> {
     let browser = connect_or_start_browser(port).await?;
     let page = find_outlook_page(&browser).await?;
 
-    let selector = format!("[data-convid=\"{}\"]", id);
+    let selector = crate::browser::message_selector(id);
     click_element(&page, &selector, Some(2000)).await?;
 
     let read_script = r#"
