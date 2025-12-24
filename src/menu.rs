@@ -29,12 +29,7 @@ pub async fn right_click_element(page: &Page, selector: &str, sleep_ms: Option<u
         })
         .ok_or_else(|| anyhow::anyhow!("Element not found: {}", selector))?;
 
-    right_click(page, x, y).await?;
-
-    let ms = sleep_ms.unwrap_or(300);
-    tokio::time::sleep(tokio::time::Duration::from_millis(ms)).await;
-
-    Ok(())
+    right_click(page, x, y, sleep_ms).await
 }
 
 /// Click on a menu item by text (partial match, case-insensitive)
@@ -122,7 +117,7 @@ pub async fn is_categorize_button_visible(page: &Page) -> Result<bool> {
 }
 
 /// Right-click at the specified coordinates using CDP
-pub async fn right_click(page: &Page, x: f64, y: f64) -> Result<()> {
+pub async fn right_click(page: &Page, x: f64, y: f64, sleep_ms: Option<u64>) -> Result<()> {
     // Move mouse to position
     let move_params = DispatchMouseEventParams::builder()
         .r#type(DispatchMouseEventType::MouseMoved)
@@ -153,6 +148,9 @@ pub async fn right_click(page: &Page, x: f64, y: f64) -> Result<()> {
         .build()
         .unwrap();
     page.execute(up_params).await?;
+
+    let ms = sleep_ms.unwrap_or(300);
+    tokio::time::sleep(tokio::time::Duration::from_millis(ms)).await;
 
     Ok(())
 }
