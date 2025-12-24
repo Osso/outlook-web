@@ -66,10 +66,7 @@ impl Client {
                 anyhow::bail!("Categorize button not found");
             }
 
-            if !menu::click_categorize(&page).await? {
-                anyhow::bail!("Failed to click Categorize");
-            }
-            tokio::time::sleep(tokio::time::Duration::from_millis(800)).await;
+            menu::click_categorize(&page, Some(800)).await?;
 
             if !menu::is_category_visible(&page, label).await? {
                 anyhow::bail!("Category submenu didn't open");
@@ -304,18 +301,10 @@ impl Client {
         }
 
         // Step 2: Click Categorize to open submenu
-        if !menu::click_categorize(&page).await? {
-            anyhow::bail!("Failed to click Categorize");
-        }
-        tokio::time::sleep(tokio::time::Duration::from_millis(800)).await;
+        menu::click_categorize(&page, Some(800)).await?;
 
         // Step 3: Click "Manage Categories" to open the full list
-        if !menu::click_manage_categories(&page).await? {
-            let items = menu::list_menu_items(&page).await?;
-            anyhow::bail!("'Manage Categories' not found. Available items: {:?}", items);
-        }
-
-        tokio::time::sleep(tokio::time::Duration::from_secs(1)).await;
+        menu::click_manage_categories(&page, Some(1000)).await?;
 
         // Step 4: Extract categories from the dialog
         let categories = menu::extract_categories_from_dialog(&page).await?;
