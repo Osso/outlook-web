@@ -74,17 +74,7 @@ impl Client {
         }
 
         // Step 3: Click on the category
-        let result = menu::click_category(&page, label).await?;
-
-        match result.status.as_str() {
-            "success" => Ok(()),
-            "category_not_found" => anyhow::bail!(
-                "Category '{}' not found. Available: {:?}",
-                label,
-                result.categories
-            ),
-            _ => anyhow::bail!("Failed to add label: {}", result.status),
-        }
+        menu::click_category(&page, label, None).await
     }
 
     pub async fn remove_label(&self, id: &str, label: &str) -> Result<()> {

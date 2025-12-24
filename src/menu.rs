@@ -285,49 +285,88 @@ pub async fn click_categorize(page: &Page, sleep_ms: Option<u64>) -> Result<()> 
     click_menu_item(page, "categorize", sleep_ms).await
 }
 
-#[derive(serde::Deserialize, Default, Debug)]
-pub struct ClickCategoryResult {
-    #[serde(default)]
-    pub status: String,
-    #[serde(default)]
-    pub categories: Vec<String>,
-}
-
 /// Click on a specific category in the submenu
 /// Assumes the category submenu is already open
-pub async fn click_category(page: &Page, label: &str) -> Result<ClickCategoryResult> {
-    let script = format!(
+/// Will click "Show all categories" if the category isn't visible
+pub async fn click_category(page: &Page, label: &str, sleep_ms: Option<u64>) -> Result<()> {
+    // First try to find and click the category directly
+    let try_click = format!(
         r#"
         (() => {{
             const items = document.querySelectorAll('[role="menuitemcheckbox"], [role="menuitem"]');
-            const categoryTexts = [];
-
             for (const item of items) {{
                 const text = item.textContent?.trim() || '';
                 if (text.endsWith('{label}')) {{
                     item.click();
-                    return JSON.stringify({{ status: 'success' }});
-                }}
-                // Collect category names for error reporting
-                if (text.includes('category') ||
-                    ['Account', 'Classified', 'Security', 'Urgent', 'Green', 'Orange', 'Red', 'Yellow'].some(c => text.includes(c))) {{
-                    categoryTexts.push(text);
+                    return 'success';
                 }}
             }}
-
-            return JSON.stringify({{ status: 'category_not_found', categories: categoryTexts }});
+            return 'not_found';
         }})()
         "#,
         label = label
     );
 
-    let result = page.evaluate(script).await?;
-    let status_json = result.into_value::<String>().unwrap_or_default();
-
-    let mut parsed: ClickCategoryResult = serde_json::from_str(&status_json).unwrap_or_default();
-    if parsed.status.is_empty() {
-        parsed.status = status_json;
+    let result = page.evaluate(try_click.as_str()).await?;
+    if result.into_value::<String>().unwrap_or_default() == "success" {
+        let ms = sleep_ms.unwrap_or(300);
+        tokio::time::sleep(tokio::time::Duration::from_millis(ms)).await;
+        return Ok(());
     }
 
-    Ok(parsed)
+    // Not found - try clicking "Show all categories" or similar
+    let show_all = r#"
+        (() => {
+            const items = document.querySelectorAll('[role="menuitem"], button');
+            for (const item of items) {
+                const text = item.textContent?.toLowerCase() || '';
+                if (text.includes('show all') || text.includes('all categor') || text.includes('more categor')) {
+                    item.click();
+                    return true;
+                }
+            }
+            // Try search input
+            const search = document.querySelector('input[type="text"], input[placeholder*="search" i]');
+            if (search) {
+                search.focus();
+                return 'search';
+            }
+            return false;
+        })()
+    "#;
+
+    let show_result = page.evaluate(show_all).await?;
+    let show_status = show_result.into_value::<serde_json::Value>().ok();
+
+    tokio::time::sleep(tokio::time::Duration::from_millis(500)).await;
+
+    // If we found a search box, type the label
+    if show_status == Some(serde_json::json!("search")) {
+        let type_script = format!(
+            r#"
+            (() => {{
+                const search = document.querySelector('input[type="text"], input[placeholder*="search" i]');
+                if (search) {{
+                    search.value = '{label}';
+                    search.dispatchEvent(new Event('input', {{ bubbles: true }}));
+                    return true;
+                }}
+                return false;
+            }})()
+            "#,
+            label = label
+        );
+        page.evaluate(type_script.as_str()).await?;
+        tokio::time::sleep(tokio::time::Duration::from_millis(500)).await;
+    }
+
+    // Try clicking the category again
+    let result = page.evaluate(try_click.as_str()).await?;
+    if result.into_value::<String>().unwrap_or_default() == "success" {
+        let ms = sleep_ms.unwrap_or(300);
+        tokio::time::sleep(tokio::time::Duration::from_millis(ms)).await;
+        return Ok(());
+    }
+
+    anyhow::bail!("Category not found: {}", label)
 }
