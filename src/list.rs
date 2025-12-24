@@ -2,29 +2,44 @@ use crate::api::Message;
 use crate::browser::{connect_or_start_browser, find_outlook_page, navigate_to_inbox};
 use anyhow::{Context, Result};
 
+/// JavaScript function to extract labels from an element
+const EXTRACT_LABELS_JS: &str = r#"
+    function extractLabels(el) {
+        const labels = [];
+        // Look for "Remove X" buttons
+        el.querySelectorAll('button[aria-label^="Remove "]').forEach(btn => {
+            const label = btn.getAttribute('aria-label').replace('Remove ', '');
+            if (label && !labels.includes(label)) labels.push(label);
+        });
+        // Fallback: look for elements with category title
+        if (labels.length === 0) {
+            el.querySelectorAll('[title^="Search for all messages with the category "]').forEach(el => {
+                const title = el.getAttribute('title');
+                const label = title.replace('Search for all messages with the category ', '');
+                if (label && !labels.includes(label)) labels.push(label);
+            });
+        }
+        return labels;
+    }
+"#;
+
 pub async fn list_messages(port: u16, max: u32) -> Result<Vec<Message>> {
     let browser = connect_or_start_browser(port).await?;
     let page = find_outlook_page(&browser).await?;
 
     navigate_to_inbox(&page).await?;
 
-    let script = r#"
-        (() => {
+    let script = format!(r#"
+        (() => {{
+            {extract_labels}
             const messages = [];
-            const knownLabels = ['Classified', 'Urgent', 'Security', 'Account', 'Important', 'Personal', 'Private', 'Work', 'Family'];
             const items = document.querySelectorAll('[data-convid]');
-            items.forEach(item => {
+            items.forEach(item => {{
                 const id = item.getAttribute('data-convid');
                 const ariaLabel = item.getAttribute('aria-label') || '';
-
-                // Extract labels from list item
-                let labels = [];
-                item.querySelectorAll('button, span').forEach(el => {
-                    const text = el.textContent?.trim();
-                    if (knownLabels.includes(text) && !labels.includes(text)) {
-                        labels.push(text);
-                    }
-                });
+                const labels = extractLabels(item);"#,
+        extract_labels = EXTRACT_LABELS_JS
+    ) + r#"
 
                 // aria-label format: "[Unread] Sender Subject Time Preview..."
                 let from = '';
@@ -166,48 +181,36 @@ pub async fn get_message(port: u16, id: &str) -> Result<Message> {
     let selector = crate::browser::message_selector(id);
     click_element(&page, &selector, Some(2000)).await?;
 
-    let read_script = r#"
-        (() => {
-            const knownLabels = ['Classified', 'Urgent', 'Security', 'Account', 'Important', 'Personal', 'Private', 'Work', 'Family'];
-            let subject = '';
-            let labels = [];
-
-            // Look for labels in the message header area
-            const headerArea = document.querySelector('[class*="ReadingPane"], [class*="ItemHeader"]')
-                || document.querySelector('.fui-FluentProviderr4k');
-            if (headerArea) {
-                headerArea.querySelectorAll('button, span').forEach(el => {
-                    const text = el.textContent?.trim();
-                    if (knownLabels.includes(text) && !labels.includes(text)) {
-                        labels.push(text);
-                    }
-                });
-            }
+    let read_script = format!(r#"
+        (() => {{
+            {extract_labels}
+            const labels = extractLabels(document);
 
             // Get subject
+            let subject = '';
             const subjectEl = document.querySelector('.allowTextSelection, [class*="SubjectLine"]');
-            if (subjectEl) {
+            if (subjectEl) {{
                 subject = subjectEl.textContent?.trim() || '';
-                labels.forEach(label => {
+                labels.forEach(label => {{
                     subject = subject.replace(label, '');
-                });
+                }});
                 subject = subject.trim();
-            }
+            }}
 
             // From
             let from = '';
             const senderEl = document.querySelector('[class*="Sender"], [class*="sender"], [class*="From"], button[class*="Persona"]');
-            if (senderEl) {
+            if (senderEl) {{
                 from = senderEl.textContent?.trim();
-            }
-            if (!from) {
+            }}
+            if (!from) {{
                 const selected = document.querySelector('[data-convid][aria-selected="true"]');
-                if (selected) {
+                if (selected) {{
                     const label = selected.getAttribute('aria-label') || '';
                     const match = label.match(/^([^<]+?)(?:\s+(?:Re:|Fw:|New\s|Your\s|Microsoft|Amazon))/i);
                     if (match) from = match[1].trim();
-                }
-            }
+                }}
+            }}
 
             // Body
             const bodyEl = document.querySelector('div[role="document"]');
@@ -217,9 +220,9 @@ pub async fn get_message(port: u16, id: &str) -> Result<Message> {
             const selected = document.querySelector('[data-convid][aria-selected="true"]');
             const id = selected?.getAttribute('data-convid') || '';
 
-            return JSON.stringify({ id, subject, from, body, labels, isUnread: false });
-        })()
-    "#;
+            return JSON.stringify({{ id, subject, from, body, labels, isUnread: false }});
+        }})()
+    "#, extract_labels = EXTRACT_LABELS_JS);
 
     let result = page.evaluate(read_script).await?;
     let message_str = result.into_value::<String>().unwrap_or_default();
