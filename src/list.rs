@@ -164,9 +164,7 @@ pub async fn get_message(port: u16, id: &str) -> Result<Message> {
     let page = find_outlook_page(&browser).await?;
 
     let selector = format!("[data-convid=\"{}\"]", id);
-    if !click_element(&page, &selector, Some(2000)).await? {
-        anyhow::bail!("Message not found: {}", id);
-    }
+    click_element(&page, &selector, Some(2000)).await?;
 
     let read_script = r#"
         (() => {

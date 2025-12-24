@@ -205,13 +205,13 @@ pub async fn press_key(
     Ok(())
 }
 
-/// Click on an element by selector, returns true if found and clicked
+/// Click on an element by selector, errors if not found
 /// Sleeps after clicking for the specified duration (default 300ms)
 pub async fn click_element(
     page: &chromiumoxide::Page,
     selector: &str,
     sleep_ms: Option<u64>,
-) -> Result<bool> {
+) -> Result<()> {
     let script = format!(
         r#"
         (() => {{
@@ -227,12 +227,14 @@ pub async fn click_element(
     let result = page.evaluate(script).await?;
     let clicked = result.into_value::<bool>().unwrap_or(false);
 
-    if clicked {
-        let ms = sleep_ms.unwrap_or(300);
-        tokio::time::sleep(tokio::time::Duration::from_millis(ms)).await;
+    if !clicked {
+        anyhow::bail!("Element not found: {}", selector);
     }
 
-    Ok(clicked)
+    let ms = sleep_ms.unwrap_or(300);
+    tokio::time::sleep(tokio::time::Duration::from_millis(ms)).await;
+
+    Ok(())
 }
 
 /// Navigate to junk/spam folder
