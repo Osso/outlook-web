@@ -170,6 +170,33 @@ pub async fn navigate_to_inbox(page: &chromiumoxide::Page) -> Result<()> {
     Ok(())
 }
 
+/// Press a key on the page
+/// For letters, pass lowercase (e.g., "e"). For special keys, pass the key name (e.g., "Delete")
+pub async fn press_key(
+    page: &chromiumoxide::Page,
+    key: &str,
+    sleep_ms: Option<u64>,
+) -> Result<()> {
+    // For single lowercase letters, code is "Key" + uppercase
+    // For special keys like "Delete", code matches the key
+    let code = if key.len() == 1 && key.chars().next().unwrap().is_ascii_lowercase() {
+        format!("Key{}", key.to_uppercase())
+    } else {
+        key.to_string()
+    };
+
+    let script = format!(
+        "document.dispatchEvent(new KeyboardEvent('keydown', {{ key: '{}', code: '{}', bubbles: true }}))",
+        key, code
+    );
+    page.evaluate(script).await?;
+
+    let ms = sleep_ms.unwrap_or(500);
+    tokio::time::sleep(tokio::time::Duration::from_millis(ms)).await;
+
+    Ok(())
+}
+
 /// Click on an element by selector, returns true if found and clicked
 /// Sleeps after clicking for the specified duration (default 300ms)
 pub async fn click_element(

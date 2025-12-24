@@ -143,7 +143,7 @@ impl Client {
     }
 
     pub async fn archive(&self, id: &str) -> Result<()> {
-        use crate::browser::click_element;
+        use crate::browser::{click_element, press_key};
 
         let browser = connect_or_start_browser(self.port).await?;
         let page = find_outlook_page(&browser).await?;
@@ -153,15 +153,12 @@ impl Client {
             anyhow::bail!("Message not found: {}", id);
         }
 
-        // Press 'e' for archive
-        page.evaluate("document.dispatchEvent(new KeyboardEvent('keydown', { key: 'e', code: 'KeyE', bubbles: true }))").await?;
-
-        tokio::time::sleep(tokio::time::Duration::from_millis(500)).await;
+        press_key(&page, "e", None).await?;
         Ok(())
     }
 
     pub async fn trash(&self, id: &str) -> Result<()> {
-        use crate::browser::click_element;
+        use crate::browser::{click_element, press_key};
 
         let browser = connect_or_start_browser(self.port).await?;
         let page = find_outlook_page(&browser).await?;
@@ -171,10 +168,7 @@ impl Client {
             anyhow::bail!("Message not found: {}", id);
         }
 
-        // Press Delete key
-        page.evaluate("document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Delete', code: 'Delete', bubbles: true }))").await?;
-
-        tokio::time::sleep(tokio::time::Duration::from_millis(500)).await;
+        press_key(&page, "Delete", None).await?;
         Ok(())
     }
 
