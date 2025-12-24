@@ -35,27 +35,40 @@ async fn extract_message_list(page: &chromiumoxide::Page, max: u32) -> Result<Ve
                 const ariaLabel = item.getAttribute('aria-label') || '';
                 const labels = extractLabels(item);
 
-                // Extract from DOM elements
+                // Extract from DOM elements using stable patterns
                 let from = '';
                 let subject = '';
                 let preview = '';
 
-                // Sender: span with email in title attribute
-                const senderEl = item.querySelector('.ESO13 span[title], .Ejrkd span[title]');
+                // Sender: span with email address in title attribute
+                const senderEl = item.querySelector('span[title*="@"]');
                 if (senderEl) {{
                     from = senderEl.textContent?.trim() || '';
                 }}
 
-                // Subject: span with class TtcXM or similar
-                const subjectEl = item.querySelector('.TtcXM, .gmffI span');
-                if (subjectEl) {{
-                    subject = subjectEl.getAttribute('title') || subjectEl.textContent?.trim() || '';
+                // Subject and preview: find text spans that aren't the sender
+                const allSpans = item.querySelectorAll('span[title]');
+                for (const span of allSpans) {{
+                    const title = span.getAttribute('title') || '';
+                    const text = span.textContent?.trim() || '';
+                    // Skip sender (has @ in title) and empty spans
+                    if (title.includes('@') || !text) continue;
+                    // Skip time spans (contain : like "15:38")
+                    if (/^\d{{1,2}}:\d{{2}}$/.test(text)) continue;
+                    // First non-sender span with title is likely subject
+                    if (!subject) {{
+                        subject = title || text;
+                    }}
                 }}
 
-                // Preview: span with class FqgPc
-                const previewEl = item.querySelector('.FqgPc, .YH9yX span');
-                if (previewEl) {{
-                    preview = previewEl.textContent?.trim() || '';
+                // Preview: look for longer text content that's not the subject
+                const textSpans = item.querySelectorAll('span');
+                for (const span of textSpans) {{
+                    const text = span.textContent?.trim() || '';
+                    if (text.length > 50 && text !== subject && !text.includes('@')) {{
+                        preview = text;
+                        break;
+                    }}
                 }}
 
                 // Check for Unread marker
