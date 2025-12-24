@@ -277,12 +277,12 @@ pub async fn list_menu_items(page: &Page) -> Result<Vec<String>> {
 
 /// Click on "Manage Categories" to open the categories dialog
 pub async fn click_manage_categories(page: &Page, sleep_ms: Option<u64>) -> Result<()> {
-    click_menu_item(page, "manage categor", sleep_ms).await
+    click_menu_item(page, "manage categories", sleep_ms).await
 }
 
 /// Click on the "Categorize" menu item to open the submenu
 pub async fn click_categorize(page: &Page, sleep_ms: Option<u64>) -> Result<()> {
-    click_menu_item(page, "categor", sleep_ms).await
+    click_menu_item(page, "categorize", sleep_ms).await
 }
 
 #[derive(serde::Deserialize, Default, Debug)]

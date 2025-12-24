@@ -310,8 +310,7 @@ impl Client {
         let categories = menu::extract_categories_from_dialog(&page).await?;
 
         // Close dialog by pressing Escape
-        page.evaluate("document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', code: 'Escape', bubbles: true }))").await?;
-        tokio::time::sleep(tokio::time::Duration::from_millis(300)).await;
+        crate::browser::press_key(&page, "Escape", None, None).await?;
 
         // If we didn't find categories in the dialog, fall back to the submenu items
         if categories.is_empty() {
