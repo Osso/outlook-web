@@ -53,8 +53,7 @@ impl Client {
                 .await?
                 .ok_or_else(|| anyhow::anyhow!("Message not found: {}", id))?;
 
-            menu::right_click(&page, x, y, None).await?;
-            tokio::time::sleep(tokio::time::Duration::from_millis(1000)).await;
+            menu::right_click(&page, x, y, Some(1000)).await?;
 
             if !menu::is_context_menu_open(&page).await? {
                 anyhow::bail!("Context menu didn't open");
@@ -297,8 +296,7 @@ impl Client {
                 .await?
                 .ok_or_else(|| anyhow::anyhow!("Message not found"))?;
 
-            menu::right_click(&page, x, y, None).await?;
-            tokio::time::sleep(tokio::time::Duration::from_millis(1000)).await;
+            menu::right_click(&page, x, y, Some(1000)).await?;
 
             if !menu::is_context_menu_open(&page).await? {
                 anyhow::bail!("Context menu didn't open");
