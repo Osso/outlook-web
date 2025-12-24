@@ -187,89 +187,28 @@ impl Client {
     }
 
     pub async fn unspam(&self, id: &str) -> Result<()> {
+        use crate::browser::navigate_to_junk;
+        use crate::menu::{click_menu_item, is_context_menu_open, right_click_element};
+
         let browser = connect_or_start_browser(self.port).await?;
         let page = find_outlook_page(&browser).await?;
 
-        // Navigate to Junk folder via URL
-        let nav_script = r#"
-            (() => {
-                const url = window.location.href;
-                const match = url.match(/(https:\/\/outlook\.[^\/]+\/mail\/\d+\/)/);
-                if (match) {
-                    window.location.href = match[1] + 'junkemail';
-                    return 'navigating';
-                }
-                return 'url_parse_failed';
-            })()
-        "#;
+        navigate_to_junk(&page).await?;
 
-        let nav_result = page.evaluate(nav_script).await?;
-        let nav_status = nav_result.into_value::<String>().unwrap_or_default();
+        let selector = format!("[data-convid=\"{}\"]", id);
+        right_click_element(&page, &selector, Some(500)).await?;
 
-        if nav_status == "url_parse_failed" {
-            anyhow::bail!("Failed to parse Outlook URL for navigation");
+        if !is_context_menu_open(&page).await? {
+            anyhow::bail!("Context menu didn't open");
         }
 
-        tokio::time::sleep(tokio::time::Duration::from_secs(2)).await;
-
-        // Right-click on message and select "Not junk" or "Move to Inbox"
-        let script = format!(
-            r#"
-            (async () => {{
-                const item = document.querySelector('[data-convid="{}"]');
-                if (!item) return 'not_found';
-
-                const event = new MouseEvent('contextmenu', {{
-                    bubbles: true,
-                    cancelable: true,
-                    view: window,
-                    button: 2
-                }});
-                item.dispatchEvent(event);
-
-                await new Promise(r => setTimeout(r, 500));
-
-                // Look for "Not junk", "Not spam", or "Move to" options
-                const menuItems = document.querySelectorAll('[role="menuitem"]');
-                for (const mi of menuItems) {{
-                    const text = mi.textContent?.toLowerCase() || '';
-                    if (text.includes('not junk') || text.includes('not spam')) {{
-                        mi.click();
-                        return 'success';
-                    }}
-                }}
-
-                // Try "Move to" -> "Inbox" approach
-                for (const mi of menuItems) {{
-                    const text = mi.textContent?.toLowerCase() || '';
-                    if (text.includes('move to') || text.includes('move')) {{
-                        mi.click();
-                        await new Promise(r => setTimeout(r, 500));
-
-                        const subItems = document.querySelectorAll('[role="menuitem"]');
-                        for (const si of subItems) {{
-                            if (si.textContent?.toLowerCase().includes('inbox')) {{
-                                si.click();
-                                return 'success';
-                            }}
-                        }}
-                    }}
-                }}
-
-                return 'menu_not_found';
-            }})()
-        "#,
-            id
-        );
-
-        let result = page.evaluate(script).await?;
-        let status = result.into_value::<String>().unwrap_or_default();
-
-        match status.as_str() {
-            "success" => Ok(()),
-            "not_found" => anyhow::bail!("Message not found in Junk folder: {}", id),
-            _ => anyhow::bail!("Failed to move to inbox: {}", status),
+        // Try "Not junk" first, fall back to "Move to" -> "Inbox"
+        if click_menu_item(&page, "not junk", None).await.is_err() {
+            click_menu_item(&page, "move", Some(500)).await?;
+            click_menu_item(&page, "inbox", None).await?;
         }
+
+        Ok(())
     }
 
     pub async fn mark_read(&self, id: &str) -> Result<()> {
