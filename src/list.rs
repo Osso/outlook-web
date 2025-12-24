@@ -129,15 +129,11 @@ pub async fn get_message(port: u16, id: &str) -> Result<Message> {
             {extract_labels}
             const labels = extractLabels(document);
 
-            // Get subject
+            // Get subject - prefer title attribute for full text
             let subject = '';
-            const subjectEl = document.querySelector('.allowTextSelection, [class*="SubjectLine"]');
+            const subjectEl = document.querySelector('.allowTextSelection, [class*="SubjectLine"], [class*="JdFsz"]');
             if (subjectEl) {{
-                subject = subjectEl.textContent?.trim() || '';
-                labels.forEach(label => {{
-                    subject = subject.replace(label, '');
-                }});
-                subject = subject.trim();
+                subject = subjectEl.getAttribute('title') || subjectEl.textContent?.trim() || '';
             }}
 
             // From
