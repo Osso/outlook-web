@@ -212,93 +212,37 @@ impl Client {
     }
 
     pub async fn mark_read(&self, id: &str) -> Result<()> {
+        use crate::menu::{click_menu_item, is_context_menu_open, right_click_element};
+
         let browser = connect_or_start_browser(self.port).await?;
         let page = find_outlook_page(&browser).await?;
 
-        let script = format!(
-            r#"
-            (async () => {{
-                const item = document.querySelector('[data-convid="{}"]');
-                if (!item) return 'not_found';
+        let selector = format!("[data-convid=\"{}\"]", id);
+        right_click_element(&page, &selector, Some(500)).await?;
 
-                const event = new MouseEvent('contextmenu', {{
-                    bubbles: true,
-                    cancelable: true,
-                    view: window,
-                    button: 2
-                }});
-                item.dispatchEvent(event);
-
-                await new Promise(r => setTimeout(r, 500));
-
-                const menuItems = document.querySelectorAll('[role="menuitem"]');
-                for (const mi of menuItems) {{
-                    const text = mi.textContent?.toLowerCase() || '';
-                    if (text.includes('mark as read') || text.includes('mark read')) {{
-                        mi.click();
-                        return 'success';
-                    }}
-                }}
-
-                return 'menu_not_found';
-            }})()
-        "#,
-            id
-        );
-
-        let result = page.evaluate(script).await?;
-        let status = result.into_value::<String>().unwrap_or_default();
-
-        match status.as_str() {
-            "success" => Ok(()),
-            "not_found" => anyhow::bail!("Message not found: {}", id),
-            _ => anyhow::bail!("Failed to mark as read: {}", status),
+        if !is_context_menu_open(&page).await? {
+            anyhow::bail!("Context menu didn't open");
         }
+
+        click_menu_item(&page, "mark as read", None).await?;
+        Ok(())
     }
 
     pub async fn mark_unread(&self, id: &str) -> Result<()> {
+        use crate::menu::{click_menu_item, is_context_menu_open, right_click_element};
+
         let browser = connect_or_start_browser(self.port).await?;
         let page = find_outlook_page(&browser).await?;
 
-        let script = format!(
-            r#"
-            (async () => {{
-                const item = document.querySelector('[data-convid="{}"]');
-                if (!item) return 'not_found';
+        let selector = format!("[data-convid=\"{}\"]", id);
+        right_click_element(&page, &selector, Some(500)).await?;
 
-                const event = new MouseEvent('contextmenu', {{
-                    bubbles: true,
-                    cancelable: true,
-                    view: window,
-                    button: 2
-                }});
-                item.dispatchEvent(event);
-
-                await new Promise(r => setTimeout(r, 500));
-
-                const menuItems = document.querySelectorAll('[role="menuitem"]');
-                for (const mi of menuItems) {{
-                    const text = mi.textContent?.toLowerCase() || '';
-                    if (text.includes('mark as unread') || text.includes('mark unread')) {{
-                        mi.click();
-                        return 'success';
-                    }}
-                }}
-
-                return 'menu_not_found';
-            }})()
-        "#,
-            id
-        );
-
-        let result = page.evaluate(script).await?;
-        let status = result.into_value::<String>().unwrap_or_default();
-
-        match status.as_str() {
-            "success" => Ok(()),
-            "not_found" => anyhow::bail!("Message not found: {}", id),
-            _ => anyhow::bail!("Failed to mark as unread: {}", status),
+        if !is_context_menu_open(&page).await? {
+            anyhow::bail!("Context menu didn't open");
         }
+
+        click_menu_item(&page, "mark as unread", None).await?;
+        Ok(())
     }
 
     pub async fn clear_labels(&self, id: &str) -> Result<()> {
