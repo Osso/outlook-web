@@ -146,3 +146,26 @@ pub async fn find_outlook_page(browser: &Browser) -> Result<chromiumoxide::Page>
 
     Err(anyhow!("No Outlook tab found. Open Outlook in the browser first."))
 }
+
+/// Navigate to inbox if not already there
+pub async fn navigate_to_inbox(page: &chromiumoxide::Page) -> Result<()> {
+    let script = r#"
+        (() => {
+            const url = window.location.href;
+            if (url.includes('/inbox') || url.match(/\/mail\/\d+\/?($|id\/)/)) return 'already_inbox';
+            const match = url.match(/(https:\/\/outlook\.[^\/]+\/mail\/\d+\/)/);
+            if (match) {
+                window.location.href = match[1] + 'inbox';
+                return 'navigating';
+            }
+            return 'already_inbox';
+        })()
+    "#;
+
+    let result = page.evaluate(script).await?;
+    if result.into_value::<String>().unwrap_or_default() == "navigating" {
+        tokio::time::sleep(tokio::time::Duration::from_secs(2)).await;
+    }
+
+    Ok(())
+}

@@ -25,30 +25,12 @@ impl Client {
     }
 
     pub async fn list_messages(&self, max: u32) -> Result<Vec<Message>> {
+        use crate::browser::navigate_to_inbox;
+
         let browser = connect_or_start_browser(self.port).await?;
         let page = find_outlook_page(&browser).await?;
 
-        // Ensure we're in the inbox (base URL /mail/0/ is also inbox)
-        let nav_script = r#"
-            (() => {
-                const url = window.location.href;
-                // Check if already in inbox: either /inbox or base /mail/N/ with optional message ID
-                if (url.includes('/inbox') || url.match(/\/mail\/\d+\/?($|id\/)/)) return 'already_inbox';
-                const match = url.match(/(https:\/\/outlook\.[^\/]+\/mail\/\d+\/)/);
-                if (match) {
-                    window.location.href = match[1] + 'inbox';
-                    return 'navigating';
-                }
-                return 'already_inbox';
-            })()
-        "#;
-
-        let nav_result = page.evaluate(nav_script).await?;
-        let nav_status = nav_result.into_value::<String>().unwrap_or_default();
-
-        if nav_status == "navigating" {
-            tokio::time::sleep(tokio::time::Duration::from_secs(2)).await;
-        }
+        navigate_to_inbox(&page).await?;
 
         let script = r#"
             (() => {
@@ -782,17 +764,78 @@ impl Client {
     }
 
     pub async fn list_labels(&self) -> Result<Vec<String>> {
-        // Return known categories - Outlook Web doesn't have an easy API for this
-        Ok(vec![
-            "Classified".to_string(),
-            "Urgent".to_string(),
-            "Security".to_string(),
-            "Account".to_string(),
-            "Important".to_string(),
-            "Personal".to_string(),
-            "Private".to_string(),
-            "Work".to_string(),
-            "Family".to_string(),
-        ])
+        use crate::browser::navigate_to_inbox;
+        use crate::menu;
+
+        let browser = connect_or_start_browser(self.port).await?;
+        let page = find_outlook_page(&browser).await?;
+
+        navigate_to_inbox(&page).await?;
+
+        // Find any message to right-click
+        let first_msg_script = r#"
+            (() => {
+                const item = document.querySelector('[data-convid]');
+                return item?.getAttribute('data-convid') || null;
+            })()
+        "#;
+
+        let result = page.evaluate(first_msg_script).await?;
+        let msg_id: Option<String> = result.into_value().ok();
+
+        let msg_id =
+            msg_id.ok_or_else(|| anyhow::anyhow!("No messages found to open category menu"))?;
+
+        // Wait for message to be visible
+        if !menu::wait_for_message(&page, &msg_id).await? {
+            anyhow::bail!("Message not visible");
+        }
+
+        // Step 1: Right-click to open context menu
+        if !menu::is_context_menu_open(&page).await? {
+            let (x, y) = menu::get_message_position(&page, &msg_id)
+                .await?
+                .ok_or_else(|| anyhow::anyhow!("Message not found"))?;
+
+            menu::right_click(&page, x, y).await?;
+            tokio::time::sleep(tokio::time::Duration::from_millis(1000)).await;
+
+            if !menu::is_context_menu_open(&page).await? {
+                anyhow::bail!("Context menu didn't open");
+            }
+        }
+
+        // Step 2: Click Categorize to open submenu
+        if !menu::click_categorize(&page).await? {
+            anyhow::bail!("Failed to click Categorize");
+        }
+        tokio::time::sleep(tokio::time::Duration::from_millis(800)).await;
+
+        // Step 3: Click "Manage Categories" to open the full list
+        if !menu::click_manage_categories(&page).await? {
+            let items = menu::list_menu_items(&page).await?;
+            anyhow::bail!("'Manage Categories' not found. Available items: {:?}", items);
+        }
+
+        tokio::time::sleep(tokio::time::Duration::from_secs(1)).await;
+
+        // Step 4: Extract categories from the dialog
+        let categories = menu::extract_categories_from_dialog(&page).await?;
+
+        // Close dialog by pressing Escape
+        page.evaluate("document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', code: 'Escape', bubbles: true }))").await?;
+        tokio::time::sleep(tokio::time::Duration::from_millis(300)).await;
+
+        // If we didn't find categories in the dialog, fall back to the submenu items
+        if categories.is_empty() {
+            let fallback_categories = menu::extract_categories_from_submenu(&page).await?;
+
+            // Close menu by clicking elsewhere
+            page.evaluate("document.body.click()").await?;
+
+            return Ok(fallback_categories);
+        }
+
+        Ok(categories)
     }
 }

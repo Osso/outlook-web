@@ -293,17 +293,21 @@ async fn test_connection(port: u16) -> Result<()> {
     let timeout = std::time::Duration::from_secs(2);
     for page in &pages {
         let url_result = tokio::time::timeout(timeout, page.url()).await;
-        if let Ok(Ok(Some(url))) = url_result {
-            let is_outlook = url.contains("outlook");
-            let marker = if is_outlook { " <-- Outlook" } else { "" };
-            let title = tokio::time::timeout(timeout, page.evaluate("document.title"))
-                .await
-                .ok()
-                .and_then(|r| r.ok())
-                .and_then(|r| r.into_value::<String>().ok())
-                .unwrap_or_default();
-            println!("  {}{}", title, marker);
-        }
+        let url = match url_result {
+            Ok(Ok(Some(u))) => u,
+            Ok(Ok(None)) => "(no url)".to_string(),
+            Ok(Err(_)) => "(error getting url)".to_string(),
+            Err(_) => "(timeout getting url)".to_string(),
+        };
+        let is_outlook = url.contains("outlook");
+        let marker = if is_outlook { " <-- Outlook" } else { "" };
+        let title = tokio::time::timeout(timeout, page.evaluate("document.title"))
+            .await
+            .ok()
+            .and_then(|r| r.ok())
+            .and_then(|r| r.into_value::<String>().ok())
+            .unwrap_or_else(|| "(no title)".to_string());
+        println!("  {} [{}]{}", title, url, marker);
     }
 
     match browser::find_outlook_page(&browser_instance).await {

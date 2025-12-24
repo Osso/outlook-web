@@ -1,8 +1,8 @@
 use anyhow::Result;
+use chromiumoxide::Page;
 use chromiumoxide::cdp::browser_protocol::input::{
     DispatchMouseEventParams, DispatchMouseEventType, MouseButton,
 };
-use chromiumoxide::Page;
 
 /// Check if the category submenu is open and the specific category is visible
 pub async fn is_category_visible(page: &Page, label: &str) -> Result<bool> {
@@ -133,6 +133,101 @@ pub async fn wait_for_message(page: &Page, id: &str) -> Result<bool> {
         "#,
         id
     );
+
+    let result = page.evaluate(script).await?;
+    Ok(result.into_value::<bool>().unwrap_or(false))
+}
+
+/// Extract category names from the Manage Categories dialog
+pub async fn extract_categories_from_dialog(page: &Page) -> Result<Vec<String>> {
+    let script = r#"
+        (() => {
+            const categories = [];
+            const dialog = document.querySelector('[role="dialog"]');
+            if (!dialog) return JSON.stringify([]);
+
+            // Table rows have aria-label with category name
+            const rows = dialog.querySelectorAll('tr[aria-label]');
+            for (const row of rows) {
+                const label = row.getAttribute('aria-label');
+                if (label) {
+                    categories.push(label);
+                }
+            }
+
+            return JSON.stringify(categories);
+        })()
+    "#;
+
+    let result = page.evaluate(script).await?;
+    let categories_json = result.into_value::<String>().unwrap_or_default();
+    let categories: Vec<String> = serde_json::from_str(&categories_json).unwrap_or_default();
+    Ok(categories)
+}
+
+/// Extract category names from the submenu (fallback if dialog extraction fails)
+pub async fn extract_categories_from_submenu(page: &Page) -> Result<Vec<String>> {
+    let script = r#"
+        (() => {
+            const categories = [];
+            const items = document.querySelectorAll('[role="menuitemcheckbox"]');
+            for (const item of items) {
+                let text = item.textContent?.trim() || '';
+                // Remove icon prefix (categories often start with a colored icon)
+                const parts = text.split(/[\s\u00A0]/);
+                if (parts.length > 1) {
+                    text = parts.slice(1).join(' ').trim();
+                }
+                if (text && text.length > 0 && text.length < 50 &&
+                    !text.toLowerCase().includes('clear') &&
+                    !text.toLowerCase().includes('all categor')) {
+                    categories.push(text);
+                }
+            }
+            return JSON.stringify(categories);
+        })()
+    "#;
+
+    let result = page.evaluate(script).await?;
+    let categories_json = result.into_value::<String>().unwrap_or_default();
+    let categories: Vec<String> = serde_json::from_str(&categories_json).unwrap_or_default();
+    Ok(categories)
+}
+
+/// List all visible menu items (for debugging)
+pub async fn list_menu_items(page: &Page) -> Result<Vec<String>> {
+    let script = r#"
+        (() => {
+            const items = [];
+            document.querySelectorAll('[role="menuitem"], [role="menuitemcheckbox"]').forEach(item => {
+                const text = item.textContent?.trim();
+                if (text) items.push(text);
+            });
+            return JSON.stringify(items);
+        })()
+    "#;
+
+    let result = page.evaluate(script).await?;
+    let json = result.into_value::<String>().unwrap_or_default();
+    Ok(serde_json::from_str(&json).unwrap_or_default())
+}
+
+/// Click on "Manage Categories" to open the categories dialog
+/// Returns true if clicked, false if not found
+pub async fn click_manage_categories(page: &Page) -> Result<bool> {
+    let script = r#"
+        (() => {
+            const items = document.querySelectorAll('[role="menuitem"], [role="menuitemcheckbox"]');
+            for (const item of items) {
+                const text = item.textContent?.toLowerCase() || '';
+                if (text.includes('manage categor')) {
+                    item.click();
+                    return true;
+                }
+            }
+            return false;
+        })()
+    "#;
 
     let result = page.evaluate(script).await?;
     Ok(result.into_value::<bool>().unwrap_or(false))
