@@ -152,18 +152,46 @@ pub async fn navigate_to_inbox(page: &chromiumoxide::Page) -> Result<()> {
     let script = r#"
         (() => {
             const url = window.location.href;
-            if (url.includes('/inbox') || url.match(/\/mail\/\d+\/?($|id\/)/)) return 'already_inbox';
+            if (url.includes('/inbox') || url.match(/\/mail\/\d+\/?($|id\/)/)) return 'already';
             const match = url.match(/(https:\/\/outlook\.[^\/]+\/mail\/\d+\/)/);
             if (match) {
                 window.location.href = match[1] + 'inbox';
                 return 'navigating';
             }
-            return 'already_inbox';
+            return 'already';
         })()
     "#;
 
     let result = page.evaluate(script).await?;
     if result.into_value::<String>().unwrap_or_default() == "navigating" {
+        tokio::time::sleep(tokio::time::Duration::from_secs(2)).await;
+    }
+
+    Ok(())
+}
+
+/// Navigate to junk/spam folder
+pub async fn navigate_to_junk(page: &chromiumoxide::Page) -> Result<()> {
+    let script = r#"
+        (() => {
+            const url = window.location.href;
+            if (url.includes('/junkemail')) return 'already';
+            const match = url.match(/(https:\/\/outlook\.[^\/]+\/mail\/\d+\/)/);
+            if (match) {
+                window.location.href = match[1] + 'junkemail';
+                return 'navigating';
+            }
+            return 'failed';
+        })()
+    "#;
+
+    let result = page.evaluate(script).await?;
+    let status = result.into_value::<String>().unwrap_or_default();
+
+    if status == "failed" {
+        anyhow::bail!("Failed to parse Outlook URL for navigation");
+    }
+    if status == "navigating" {
         tokio::time::sleep(tokio::time::Duration::from_secs(2)).await;
     }
 
