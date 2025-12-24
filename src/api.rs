@@ -42,6 +42,12 @@ impl Client {
         let browser = connect_or_start_browser(self.port).await?;
         let page = find_outlook_page(&browser).await?;
 
+        // Close any existing menus to ensure clean state
+        menu::close_menus(&page).await?;
+
+        // Additional delay to let the page settle after menu interaction
+        tokio::time::sleep(tokio::time::Duration::from_millis(500)).await;
+
         // Wait for the message to be visible
         if !menu::wait_for_message(&page, id).await? {
             anyhow::bail!("Message not found or not visible: {}", id);
@@ -59,22 +65,58 @@ impl Client {
         // Step 2: Check if category submenu is open, if not click Categorize
         if !menu::is_category_visible(&page, label).await? {
             if !menu::is_categorize_button_visible(&page).await? {
-                anyhow::bail!("Categorize button not found");
+                anyhow::bail!("Categorize button not found in context menu");
             }
 
-            menu::click_categorize(&page, Some(800)).await?;
+            menu::click_categorize(&page, Some(300)).await?;
 
-            // Wait for category to be visible with retries
-            let mut visible = false;
-            for _ in 0..5 {
-                if menu::is_category_visible(&page, label).await? {
-                    visible = true;
+            // Retry loop: wait for submenu to appear (check for any category item)
+            let mut submenu_opened = false;
+            for _ in 0..10 {
+                // Check if submenu is open by looking for common category items
+                if menu::is_category_visible(&page, "category").await?
+                    || menu::is_category_visible(&page, "Manage categories").await?
+                {
+                    submenu_opened = true;
                     break;
                 }
                 tokio::time::sleep(tokio::time::Duration::from_millis(200)).await;
             }
-            if !visible {
+
+            if !submenu_opened {
                 anyhow::bail!("Category submenu didn't open");
+            }
+
+            // Check if the specific label exists, create if not
+            if !menu::is_category_visible(&page, label).await? {
+                // Create the missing category
+                menu::create_category(&page, label).await?;
+
+                // Close everything and start fresh
+                menu::close_menus(&page).await?;
+                tokio::time::sleep(tokio::time::Duration::from_millis(500)).await;
+
+                // Reopen context menu with retry
+                let (x, y) = menu::get_message_position(&page, id)
+                    .await?
+                    .ok_or_else(|| anyhow::anyhow!("Message not found: {}", id))?;
+                menu::right_click(&page, x, y, Some(500)).await?;
+
+                // Wait for context menu
+                let mut menu_opened = false;
+                for _ in 0..10 {
+                    if menu::is_context_menu_open(&page).await? {
+                        menu_opened = true;
+                        break;
+                    }
+                    tokio::time::sleep(tokio::time::Duration::from_millis(200)).await;
+                }
+                if !menu_opened {
+                    anyhow::bail!("Context menu didn't reopen after category creation");
+                }
+
+                // Reopen category submenu
+                menu::click_categorize(&page, Some(500)).await?;
             }
         }
 

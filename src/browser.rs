@@ -206,6 +206,16 @@ pub async fn navigate_to_inbox(page: &chromiumoxide::Page) -> Result<()> {
     Ok(())
 }
 
+/// Type text into the currently focused element using CDP
+pub async fn type_text(page: &chromiumoxide::Page, text: &str) -> Result<()> {
+    use chromiumoxide::cdp::browser_protocol::input::InsertTextParams;
+
+    let params = InsertTextParams::builder().text(text).build().unwrap();
+    page.execute(params).await?;
+
+    Ok(())
+}
+
 /// Press a key on the page with optional modifiers
 /// For letters, pass lowercase (e.g., "e"). For special keys, pass the key name (e.g., "Delete")
 /// Modifiers: "Ctrl", "Shift", "Alt", "Meta"

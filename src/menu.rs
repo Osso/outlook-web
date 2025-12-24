@@ -136,6 +136,19 @@ pub async fn is_context_menu_open(page: &Page) -> Result<bool> {
     Ok(result.into_value::<bool>().unwrap_or(false))
 }
 
+/// Close any open menus by pressing Escape multiple times to ensure clean state
+pub async fn close_menus(page: &Page) -> Result<()> {
+    // Press Escape twice to close any nested menus (submenu + main menu)
+    for _ in 0..2 {
+        crate::browser::press_key(page, "Escape", None, None).await?;
+        tokio::time::sleep(tokio::time::Duration::from_millis(150)).await;
+    }
+    // Click somewhere neutral to deselect any focused elements
+    page.evaluate("document.body.click()").await?;
+    tokio::time::sleep(tokio::time::Duration::from_millis(200)).await;
+    Ok(())
+}
+
 /// Check if the Categorize button is visible in the context menu
 pub async fn is_categorize_button_visible(page: &Page) -> Result<bool> {
     let script = r#"
@@ -318,6 +331,81 @@ pub async fn click_manage_categories(page: &Page, sleep_ms: Option<u64>) -> Resu
     click_menu_item(page, "manage categories", sleep_ms).await
 }
 
+/// Create a new category via the "New category" menu item
+pub async fn create_category(page: &Page, name: &str) -> Result<()> {
+    // Click "New category" to open the dialog
+    click_menu_item(page, "New category", Some(500)).await?;
+
+    // Wait for dialog to appear
+    let mut dialog_opened = false;
+    for _ in 0..10 {
+        let script = r#"document.querySelector('[role="dialog"]') !== null"#;
+        let result = page.evaluate(script).await?;
+        if result.into_value::<bool>().unwrap_or(false) {
+            dialog_opened = true;
+            break;
+        }
+        tokio::time::sleep(tokio::time::Duration::from_millis(200)).await;
+    }
+
+    if !dialog_opened {
+        anyhow::bail!("New category dialog didn't open");
+    }
+
+    // Focus the input field
+    let focus_script = r#"
+        (() => {
+            const dialog = document.querySelector('[role="dialog"]');
+            if (!dialog) return false;
+            const input = dialog.querySelector('input[type="text"]');
+            if (!input) return false;
+            input.focus();
+            input.select();
+            return true;
+        })()
+    "#;
+
+    let result = page.evaluate(focus_script).await?;
+    if !result.into_value::<bool>().unwrap_or(false) {
+        anyhow::bail!("Could not find category name input");
+    }
+
+    tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
+
+    // Type the name using CDP insertText
+    crate::browser::type_text(page, name).await?;
+
+    tokio::time::sleep(tokio::time::Duration::from_millis(200)).await;
+
+    // Click the Save/Create button
+    let save_script = r#"
+        (() => {
+            const dialog = document.querySelector('[role="dialog"]');
+            if (!dialog) return false;
+            // Look for Save or Create button
+            const buttons = dialog.querySelectorAll('button');
+            for (const btn of buttons) {
+                const text = btn.textContent?.toLowerCase() || '';
+                if (text.includes('save') || text.includes('create') || text.includes('ok')) {
+                    btn.click();
+                    return true;
+                }
+            }
+            return false;
+        })()
+    "#;
+
+    let result = page.evaluate(save_script).await?;
+    if !result.into_value::<bool>().unwrap_or(false) {
+        anyhow::bail!("Could not find Save button in category dialog");
+    }
+
+    // Wait for dialog to close
+    tokio::time::sleep(tokio::time::Duration::from_millis(500)).await;
+
+    Ok(())
+}
+
 /// Click on the "Categorize" menu item to open the submenu
 pub async fn click_categorize(page: &Page, sleep_ms: Option<u64>) -> Result<()> {
     click_menu_item(page, "categorize", sleep_ms).await
@@ -325,12 +413,11 @@ pub async fn click_categorize(page: &Page, sleep_ms: Option<u64>) -> Result<()> 
 
 /// Click on a specific category in the submenu
 /// Assumes the category submenu is already open
-/// Clicks "Show all categories" first to ensure all categories are visible
 pub async fn click_category(page: &Page, label: &str, sleep_ms: Option<u64>) -> Result<()> {
-    // Click "Show all categories" first
-    let _ = click_menu_item(page, "all categories", Some(300)).await;
+    // Small delay to ensure submenu is fully rendered
+    tokio::time::sleep(tokio::time::Duration::from_millis(200)).await;
 
-    // Now click the specific category
+    // Click the specific category only if not already checked
     let click_script = format!(
         r#"
         (() => {{
@@ -338,22 +425,33 @@ pub async fn click_category(page: &Page, label: &str, sleep_ms: Option<u64>) -> 
             for (const item of items) {{
                 const text = item.textContent?.trim() || '';
                 if (text.endsWith('{label}')) {{
+                    // Check if already applied (aria-checked="true")
+                    if (item.getAttribute('aria-checked') === 'true') {{
+                        return 'already_set';
+                    }}
                     item.click();
-                    return true;
+                    return 'clicked';
                 }}
             }}
-            return false;
+            return 'not_found';
         }})()
         "#,
         label = label
     );
 
     let result = page.evaluate(click_script.as_str()).await?;
-    if !result.into_value::<bool>().unwrap_or(false) {
+    let status = result.into_value::<String>().unwrap_or_default();
+
+    if status == "not_found" {
         anyhow::bail!("Category not found: {}", label);
     }
+    // If "already_set" or "clicked", we're good
 
     let ms = sleep_ms.unwrap_or(300);
     tokio::time::sleep(tokio::time::Duration::from_millis(ms)).await;
+
+    // Close menu after clicking category using close_menus for consistent cleanup
+    close_menus(page).await?;
+
     Ok(())
 }
