@@ -55,6 +55,22 @@ async fn extract_message_list(page: &chromiumoxide::Page, max: u32) -> Result<Ve
                     if (title.includes('@') || !text) continue;
                     // Skip time spans (contain : like "15:38")
                     if (/^\d{{1,2}}:\d{{2}}$/.test(text)) continue;
+                    // Skip recipient lists (names separated by semicolons like "John; Jane" or "A; B; C")
+                    // These are CC/To lists, not subject lines - but use first name as sender if needed
+                    if (text.includes(';')) {{
+                        const parts = text.split(';').map(p => p.trim());
+                        // Detect if any part contains an email address
+                        const hasEmails = parts.some(p => p.includes('@'));
+                        // Or if all parts look like names (start with capital, reasonably short)
+                        const looksLikeNames = parts.every(p => p.length > 0 && p.length < 40 && /^[A-Z]/.test(p));
+                        if ((hasEmails || looksLikeNames) && parts.length >= 2) {{
+                            // Use first name as sender if we don't have one yet
+                            if (!from && parts[0] && !parts[0].includes('@')) {{
+                                from = parts[0];
+                            }}
+                            continue;
+                        }}
+                    }}
                     // First non-sender span with title is likely subject
                     if (!subject) {{
                         subject = title || text;
