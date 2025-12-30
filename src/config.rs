@@ -14,8 +14,8 @@ impl Config {
 }
 
 fn config_path() -> Result<PathBuf> {
-    let config_dir = dirs::config_dir()
-        .ok_or_else(|| anyhow::anyhow!("Could not find config directory"))?;
+    let config_dir =
+        dirs::config_dir().ok_or_else(|| anyhow::anyhow!("Could not find config directory"))?;
     Ok(config_dir.join("outlook-web").join("config.json"))
 }
 

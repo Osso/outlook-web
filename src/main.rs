@@ -171,7 +171,10 @@ async fn main() -> Result<()> {
                 println!("{}", serde_json::to_string(&msg)?);
             } else {
                 println!("From: {}", msg.from.as_deref().unwrap_or("Unknown"));
-                println!("Subject: {}", msg.subject.as_deref().unwrap_or("(no subject)"));
+                println!(
+                    "Subject: {}",
+                    msg.subject.as_deref().unwrap_or("(no subject)")
+                );
                 if !msg.labels.is_empty() {
                     println!("Labels: {}", msg.labels.join(", "));
                 }

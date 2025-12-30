@@ -1,4 +1,4 @@
-use anyhow::{anyhow, Context, Result};
+use anyhow::{Context, Result, anyhow};
 use chromiumoxide::browser::Browser;
 use futures::StreamExt;
 use serde::Deserialize;
@@ -17,30 +17,39 @@ struct BrowserVersion {
 
 /// Browser executable paths to try in order of preference
 const BROWSER_CANDIDATES: &[(&str, &[&str])] = &[
-    ("Vivaldi", &[
-        // Linux
-        "/usr/bin/vivaldi",
-        "/usr/bin/vivaldi-stable",
-        "/opt/vivaldi/vivaldi",
-        // macOS
-        "/Applications/Vivaldi.app/Contents/MacOS/Vivaldi",
-    ]),
-    ("Chromium", &[
-        // Linux
-        "/usr/bin/chromium",
-        "/usr/bin/chromium-browser",
-        "/snap/bin/chromium",
-        // macOS
-        "/Applications/Chromium.app/Contents/MacOS/Chromium",
-    ]),
-    ("Chrome", &[
-        // Linux
-        "/usr/bin/google-chrome",
-        "/usr/bin/google-chrome-stable",
-        "/opt/google/chrome/google-chrome",
-        // macOS
-        "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome",
-    ]),
+    (
+        "Vivaldi",
+        &[
+            // Linux
+            "/usr/bin/vivaldi",
+            "/usr/bin/vivaldi-stable",
+            "/opt/vivaldi/vivaldi",
+            // macOS
+            "/Applications/Vivaldi.app/Contents/MacOS/Vivaldi",
+        ],
+    ),
+    (
+        "Chromium",
+        &[
+            // Linux
+            "/usr/bin/chromium",
+            "/usr/bin/chromium-browser",
+            "/snap/bin/chromium",
+            // macOS
+            "/Applications/Chromium.app/Contents/MacOS/Chromium",
+        ],
+    ),
+    (
+        "Chrome",
+        &[
+            // Linux
+            "/usr/bin/google-chrome",
+            "/usr/bin/google-chrome-stable",
+            "/opt/google/chrome/google-chrome",
+            // macOS
+            "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome",
+        ],
+    ),
 ];
 
 /// Find the first available browser executable
@@ -58,12 +67,13 @@ fn find_browser() -> Option<(&'static str, &'static str)> {
 /// Start a browser with remote debugging enabled
 pub fn start_browser(port: u16) -> Result<()> {
     let (name, path) = find_browser().ok_or_else(|| {
-        anyhow!(
-            "No supported browser found. Install one of: Vivaldi, Chromium, or Chrome"
-        )
+        anyhow!("No supported browser found. Install one of: Vivaldi, Chromium, or Chrome")
     })?;
 
-    eprintln!("Starting {} with remote debugging on port {}...", name, port);
+    eprintln!(
+        "Starting {} with remote debugging on port {}...",
+        name, port
+    );
 
     Command::new(path)
         .arg(format!("--remote-debugging-port={}", port))
@@ -80,10 +90,7 @@ pub async fn get_browser_ws_url(port: u16) -> Result<String> {
     let url = format!("http://127.0.0.1:{}/json/version", port);
     let resp: BrowserVersion = reqwest::get(&url)
         .await
-        .context(format!(
-            "Failed to connect to browser on port {}",
-            port
-        ))?
+        .context(format!("Failed to connect to browser on port {}", port))?
         .json()
         .await?;
     Ok(resp.ws_url)
@@ -123,7 +130,8 @@ pub async fn connect_or_start_browser(port: u16) -> Result<Browser> {
         return Err(anyhow!(
             "Browser is running but remote debugging is not enabled.\n\
             Please close your browser and run this command again,\n\
-            or restart it with: vivaldi --remote-debugging-port={}", port
+            or restart it with: vivaldi --remote-debugging-port={}",
+            port
         ));
     }
 
@@ -137,7 +145,9 @@ pub async fn connect_or_start_browser(port: u16) -> Result<Browser> {
             return Ok(browser);
         }
         if attempt == 120 {
-            return Err(anyhow!("Browser started but failed to connect after 60 seconds"));
+            return Err(anyhow!(
+                "Browser started but failed to connect after 60 seconds"
+            ));
         }
     }
 
@@ -151,9 +161,7 @@ pub async fn connect_browser(port: u16) -> Result<Browser> {
         .await
         .context("Failed to connect to browser via WebSocket")?;
 
-    tokio::spawn(async move {
-        while handler.next().await.is_some() {}
-    });
+    tokio::spawn(async move { while handler.next().await.is_some() {} });
 
     // Fetch existing targets (pages that were open before we connected)
     browser.fetch_targets().await?;
@@ -180,7 +188,9 @@ pub async fn find_outlook_page(browser: &Browser) -> Result<chromiumoxide::Page>
         }
     }
 
-    Err(anyhow!("No Outlook tab found. Open Outlook in the browser first."))
+    Err(anyhow!(
+        "No Outlook tab found. Open Outlook in the browser first."
+    ))
 }
 
 /// Navigate to inbox if not already there

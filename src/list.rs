@@ -25,7 +25,8 @@ const EXTRACT_LABELS_JS: &str = r#"
 
 /// Extract messages from the current page view
 async fn extract_message_list(page: &chromiumoxide::Page, max: u32) -> Result<Vec<Message>> {
-    let script = format!(r#"
+    let script = format!(
+        r#"
         (() => {{
             {extract_labels}
             const messages = [];
@@ -96,7 +97,9 @@ async fn extract_message_list(page: &chromiumoxide::Page, max: u32) -> Result<Ve
             }});
             return JSON.stringify(messages);
         }})()
-    "#, extract_labels = EXTRACT_LABELS_JS);
+    "#,
+        extract_labels = EXTRACT_LABELS_JS
+    );
 
     let result = page.evaluate(script).await?;
     let messages_str = result.into_value::<String>().unwrap_or_default();
@@ -130,7 +133,8 @@ pub async fn get_message(port: u16, id: &str) -> Result<Message> {
     let selector = crate::browser::message_selector(id);
     click_element(&page, &selector, Some(2000)).await?;
 
-    let read_script = format!(r#"
+    let read_script = format!(
+        r#"
         (() => {{
             {extract_labels}
             const labels = extractLabels(document);
@@ -167,11 +171,12 @@ pub async fn get_message(port: u16, id: &str) -> Result<Message> {
 
             return JSON.stringify({{ id, subject, from, body, labels, isUnread: false }});
         }})()
-    "#, extract_labels = EXTRACT_LABELS_JS);
+    "#,
+        extract_labels = EXTRACT_LABELS_JS
+    );
 
     let result = page.evaluate(read_script).await?;
     let message_str = result.into_value::<String>().unwrap_or_default();
-    let message: Message =
-        serde_json::from_str(&message_str).context("Failed to parse message")?;
+    let message: Message = serde_json::from_str(&message_str).context("Failed to parse message")?;
     Ok(message)
 }
